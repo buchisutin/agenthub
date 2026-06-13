@@ -19,6 +19,7 @@ export function Sidebar() {
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
 
   const sortedConvs = [...state.conversations].sort(
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
@@ -71,12 +72,17 @@ export function Sidebar() {
       className={`${collapsed ? 'w-12' : 'w-72'} flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl transition-[width] duration-150`}
       style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
     >
-      <div className={collapsed ? 'px-2 py-3' : 'px-5 pt-5 pb-4'} style={{ borderBottom: '0.5px solid var(--app-border)' }}>
+      <div
+        className={collapsed ? 'px-2 py-3 relative' : 'px-5 pt-5 pb-4 relative'}
+        style={{
+          borderBottom: '0.5px solid var(--app-border)',
+          boxShadow: scrolled && !collapsed ? '0 2px 8px rgba(0,0,0,0.06)' : undefined,
+        }}>
         <div className={collapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between gap-2'}>
           {!collapsed && <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>}
           <button
             type="button"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
             aria-label={collapsed ? '展开会话列表' : '收起会话列表'}
             className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:opacity-90"
             style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)', backgroundColor: 'var(--card-bg)' }}
@@ -115,7 +121,7 @@ export function Sidebar() {
           ))}
         </div>
       ) : (
-      <div className="flex-1 overflow-y-auto px-2 py-3">
+      <div className="flex-1 overflow-y-auto px-2 py-3" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
         {state.loadingConvs ? (
           <div className="p-4 space-y-3">
             {[1, 2, 3].map((i) => (

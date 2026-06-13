@@ -11,7 +11,7 @@ import { RunCard } from '../RunCard';
 import { ConflictReviewCard } from '../ConflictReviewCard';
 import { TaskDetailDrawer } from '../TaskPanel';
 import { ArtifactPanel, DEFAULT_ARTIFACT_PANEL_WIDTH, type ArtifactTab } from '../ArtifactPanel';
-import { CollaborationOverview } from '../CollaborationOverview';
+import { TopBar } from '../TopBar';
 import { WorkspaceSetup } from '../WorkspaceSetup';
 import { createTimelineItemFromRun } from '../../store/timeline';
 import { Badge } from '../ui/Badge';
@@ -354,14 +354,9 @@ export function ChatArea() {
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
         style={{ paddingRight: showArtifactPanel ? artifactPanelWidth + 32 : 0 }}
       >
+        <TopBar onOpenArtifacts={openArtifacts} />
         <div className="flex-1 overflow-y-auto px-8 py-5">
           <div className="mx-auto w-full max-w-5xl space-y-6">
-            <CollaborationOverview
-              plans={plans}
-              timeline={timeline}
-              activeRunIds={activeRunIds}
-              onOpenArtifacts={openArtifacts}
-            />
             {state.error ? (
               <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FEF2F2', color: 'var(--status-danger)' }}>
                 {state.error}

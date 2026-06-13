@@ -2,8 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { AppProvider } from './store/AppContext';
 import { Sidebar, type SidebarMode } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
-import { TopBar } from './components/TopBar';
-import { Toast, ConnectionBanner } from './components/Toast';
+import { ConnectionBanner, Toast } from './components/Toast';
 
 function AppLayout() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('expanded');
@@ -60,7 +59,6 @@ function AppLayout() {
         className="flex-1 flex min-h-0 flex-col min-w-0 overflow-hidden rounded-xl"
         style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
       >
-        <TopBar />
         <ConnectionBanner />
         <ChatArea />
       </div>

@@ -34,7 +34,7 @@ export function RunCard({
   item: ChatTimelineItem;
   isActive: boolean;
   onInterrupt: () => void;
-  onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview' | 'summary') => void;
+  onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview') => void;
 }) {
   const { dispatch } = useApp();
   const cardRef = useRef<HTMLDivElement | null>(null);

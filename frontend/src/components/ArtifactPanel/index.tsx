@@ -13,7 +13,7 @@ import type {
   TaskAssignment,
 } from '../../types';
 
-export type ArtifactTab = 'tasks' | 'diff' | 'preview' | 'summary';
+export type ArtifactTab = 'tasks' | 'diff' | 'preview';
 
 interface ArtifactPanelProps {
   open: boolean;
@@ -163,22 +163,17 @@ export function ArtifactPanel({
               成果面板
             </div>
             <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              {completedRuns} completed runs · {attentionRuns} needs attention
+              {completedRuns} 个 Run 已完成 · {attentionRuns} 个需要处理
             </div>
           </div>
           <button type="button" onClick={onClose} className="text-sm" style={{ color: 'var(--app-text-secondary)' }}>
             Close
           </button>
         </div>
-
-        <div className="mt-5 grid grid-cols-2 gap-3">
-          <PanelMetric label="可验收 Run" value={completedRuns} />
-          <PanelMetric label="待处理" value={attentionRuns} danger={attentionRuns > 0} />
-        </div>
       </div>
 
       <div className="flex gap-1 px-5 py-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
-        {(['tasks', 'diff', 'preview', 'summary'] as ArtifactTab[]).map((tab) => (
+        {(['diff', 'preview', 'tasks'] as ArtifactTab[]).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -190,7 +185,7 @@ export function ArtifactPanel({
               border: activeTab === tab ? '0.5px solid var(--app-border)' : '0.5px solid transparent',
             }}
           >
-            {tab === 'tasks' ? 'Tasks' : tab === 'diff' ? 'Diff' : tab === 'preview' ? 'Preview' : 'Summary'}
+            {tab === 'diff' ? '代码改动' : tab === 'preview' ? '网页预览' : '执行计划'}
           </button>
         ))}
       </div>
@@ -209,30 +204,8 @@ export function ArtifactPanel({
         )}
         {activeTab === 'diff' && <DiffTab runId={runId} />}
         {activeTab === 'preview' && <PreviewTab runId={runId} />}
-        {activeTab === 'summary' && (
-          <SummaryTab plans={plans} timeline={timeline} completedRuns={completedRuns} attentionRuns={attentionRuns} />
-        )}
       </div>
     </aside>
-  );
-}
-
-function PanelMetric({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
-  return (
-    <div
-      className="rounded-lg px-4 py-3"
-      style={{
-        backgroundColor: danger ? '#FEF2F2' : 'var(--card-bg)',
-        border: danger ? '0.5px solid #FECACA' : '0.5px solid var(--app-border)',
-      }}
-    >
-      <div className="text-base font-semibold" style={{ color: danger ? '#991B1B' : 'var(--app-text)' }}>
-        {value}
-      </div>
-      <div className="text-xs" style={{ color: danger ? '#991B1B' : 'var(--app-text-secondary)' }}>
-        {label}
-      </div>
-    </div>
   );
 }
 
@@ -266,29 +239,32 @@ function TasksTab({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="overflow-hidden rounded-lg" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}>
+      <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(96px,0.7fr)_84px] gap-3 px-4 py-2 text-xs font-medium" style={{ color: 'var(--app-text-secondary)', borderBottom: '0.5px solid var(--app-border)' }}>
+        <div>任务</div>
+        <div>负责 Agent</div>
+        <div>状态</div>
+      </div>
       {rows.map(({ planId, item }) => (
         <button
           key={`${planId}-${item.taskId || item.index}`}
           type="button"
           onClick={() => onOpenTask(item.taskId)}
-          className="w-full rounded-lg px-4 py-4 text-left"
-          style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
+          className="grid w-full grid-cols-[minmax(0,1.4fr)_minmax(96px,0.7fr)_84px] gap-3 px-4 py-3 text-left"
+          style={{ borderTop: '0.5px solid var(--app-border)' }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium" style={{ color: 'var(--app-text)' }}>
-                {item.title}
-              </div>
-              <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                @{item.assignedAgentName || agentName(item.assignedAgentId, agents)}
-              </div>
-              {item.dependsOn && item.dependsOn.length > 0 ? (
-                <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                  等待 {item.dependsOn.join(', ')}
-                </div>
-              ) : null}
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium" style={{ color: 'var(--app-text)' }}>
+              {item.title}
             </div>
+            <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+              {item.dependsOn && item.dependsOn.length > 0 ? `等待 ${item.dependsOn.join(', ')}` : '无依赖'}
+            </div>
+          </div>
+          <div className="truncate text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+            @{item.assignedAgentName || agentName(item.assignedAgentId, agents)}
+          </div>
+          <div>
             <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
           </div>
         </button>
@@ -333,16 +309,12 @@ function DiffTab({ runId }: { runId: string | null }) {
   return (
     <div className="space-y-3">
       {changes.map((change) => (
-        <div
-          key={change.filePath}
-          className="rounded-lg px-4 py-4"
-          style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
-        >
+        <div key={change.filePath} className="overflow-hidden rounded-lg" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}>
           <div className="flex items-center justify-between gap-2">
-            <code className="truncate text-xs" style={{ color: 'var(--app-text)' }}>{change.filePath}</code>
+            <code className="truncate px-4 py-3 text-xs" style={{ color: 'var(--app-text)' }}>{change.filePath}</code>
             <Badge variant="muted">{change.changeType}</Badge>
           </div>
-          <div className="mt-2 max-h-72 overflow-auto rounded-md" style={{ backgroundColor: '#0D1117', border: '0.5px solid #30363D' }}>
+          <div className="max-h-72 overflow-auto">
             <UnifiedDiffView change={change} />
           </div>
         </div>
@@ -391,34 +363,6 @@ function PreviewTab({ runId }: { runId: string | null }) {
         </div>
       )}
       {error && <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FEF2F2', color: '#991B1B' }}>{error}</div>}
-    </div>
-  );
-}
-
-function SummaryTab({
-  plans,
-  timeline,
-  completedRuns,
-  attentionRuns,
-}: {
-  plans: PlanCardModel[];
-  timeline: ChatTimelineItem[];
-  completedRuns: number;
-  attentionRuns: number;
-}) {
-  const totalTasks = plans.reduce((sum, plan) => sum + plan.items.length, 0);
-  const completedTasks = plans.reduce((sum, plan) => sum + plan.items.filter((item) => item.status === 'completed').length, 0);
-
-  return (
-    <div className="space-y-3">
-      <PanelMetric label="任务完成" value={completedTasks} />
-      <PanelMetric label="任务总数" value={totalTasks} />
-      <PanelMetric label="Run 总数" value={timeline.length} />
-      <PanelMetric label="已完成 Run" value={completedRuns} />
-      <PanelMetric label="待处理" value={attentionRuns} danger={attentionRuns > 0} />
-      <div className="rounded-lg px-3 py-3 text-sm" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)', color: 'var(--app-text-secondary)' }}>
-        完整 Markdown 总结仍可通过现有总结入口生成；这里先展示会话级协作概览。
-      </div>
     </div>
   );
 }

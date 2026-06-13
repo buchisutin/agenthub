@@ -75,7 +75,7 @@ export function DiffCard({
 
   if (loading) {
     return (
-      <div className="agenthub-card ml-10 p-4 text-sm" style={{ color: 'var(--app-text-secondary)' }}>
+      <div className="ml-10 rounded-lg p-4 text-sm" style={{ backgroundColor: '#FFFFFF', border: '0.5px solid var(--app-border)', color: 'var(--app-text-secondary)' }}>
         Loading file changes...
       </div>
     );
@@ -91,20 +91,20 @@ export function DiffCard({
 
   if (changes.length === 0) {
     return (
-      <div className="agenthub-card ml-10 p-4 text-sm" style={{ color: 'var(--app-text-secondary)' }}>
+      <div className="ml-10 rounded-lg p-4 text-sm" style={{ backgroundColor: '#FFFFFF', border: '0.5px solid var(--app-border)', color: 'var(--app-text-secondary)' }}>
         No file changes detected in this run
       </div>
     );
   }
 
   return (
-    <div className="agenthub-card ml-10 overflow-hidden">
+    <div className="ml-10 overflow-hidden rounded-lg" style={{ backgroundColor: '#FFFFFF', border: '0.5px solid var(--app-border)' }}>
       <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--app-border)' }}>
         <div className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>
           Code Changes
         </div>
         <div className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-          Unified Diff
+          Code Review
         </div>
       </div>
 
@@ -138,7 +138,7 @@ export function DiffCard({
                   const showLoadPrompt = largeDiff && expanded && !diffLoaded;
 
                   return (
-                    <div key={change.filePath} className="rounded-lg overflow-hidden" style={{ border: '1px solid #30363D', backgroundColor: '#0D1117' }}>
+                    <div key={change.filePath} className="overflow-hidden rounded-md" style={{ border: '0.5px solid #D8DEE4', backgroundColor: '#FFFFFF' }}>
                       <button
                         type="button"
                         className="w-full px-4 py-3 flex items-center justify-between gap-4 text-left"
@@ -148,14 +148,14 @@ export function DiffCard({
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 min-w-0">
-                            <div className="text-sm font-medium truncate" style={{ color: '#C9D1D9' }}>
+                            <div className="text-sm font-medium truncate" style={{ color: '#24292F' }}>
                               {formatRelativePath(change.filePath, workspaceRootPath)}
                             </div>
                             <Badge variant="muted">{getChangeTypeLabel(change.changeType)}</Badge>
                           </div>
-                          <div className="mt-1 text-xs flex flex-wrap items-center gap-2" style={{ color: '#8B949E' }}>
-                            <span style={{ color: '#15803D' }}>+{addedCount}</span>
-                            <span style={{ color: '#991B1B' }}>-{deletedCount}</span>
+                          <div className="mt-1 text-xs flex flex-wrap items-center gap-2" style={{ color: '#57606A' }}>
+                            <span style={{ color: '#1A7F37' }}>+{addedCount}</span>
+                            <span style={{ color: '#CF222E' }}>-{deletedCount}</span>
                             {largeDiff && (
                               <span>Large diff</span>
                             )}
@@ -169,18 +169,18 @@ export function DiffCard({
                             )}
                           </div>
                         </div>
-                        <span className="shrink-0 text-xs" style={{ color: '#8B949E' }}>
+                        <span className="shrink-0 text-xs" style={{ color: '#57606A' }}>
                           {expanded ? 'Collapse' : 'Expand'}
                         </span>
                       </button>
 
                       {showLoadPrompt && (
-                        <div className="px-4 py-3 text-xs" style={{ borderTop: '1px solid #30363D', color: '#8B949E', backgroundColor: '#0D1117' }}>
+                        <div className="px-4 py-3 text-xs" style={{ borderTop: '0.5px solid #D8DEE4', color: '#57606A', backgroundColor: '#F6F8FA' }}>
                           <div>Large diff, click to load</div>
                           <button
                             type="button"
                             className="mt-3 rounded-md px-3 py-2 text-xs font-medium"
-                            style={{ backgroundColor: '#161B22', color: '#C9D1D9', border: '1px solid #30363D' }}
+                            style={{ backgroundColor: '#FFFFFF', color: '#24292F', border: '0.5px solid #D8DEE4' }}
                             aria-label={`Load diff for ${formatRelativePath(change.filePath, workspaceRootPath)}`}
                             onClick={() =>
                               setLoadedLargeDiffs((cur) => ({ ...cur, [change.filePath]: true }))
@@ -303,7 +303,7 @@ function buildUnifiedDiffLines(change: FileChange): UnifiedDiffLine[] {
     }
     if (
       newIndex < newLines.length
-      && (oldIndex >= oldLines.length || table[oldIndex][newIndex + 1] >= table[oldIndex + 1][newIndex])
+      && (oldIndex >= oldLines.length || table[oldIndex][newIndex + 1] > table[oldIndex + 1][newIndex])
     ) {
       result.push({
         kind: 'add',
@@ -332,27 +332,27 @@ export function UnifiedDiffView({ change }: { change: FileChange }) {
 
   if (lines.length === 0) {
     return (
-      <div className="px-4 py-3 text-xs italic" style={{ borderTop: '1px solid #30363D', color: '#6E7681' }}>
+      <div className="px-4 py-3 text-xs italic" style={{ borderTop: '0.5px solid #D8DEE4', color: '#57606A', backgroundColor: '#F6F8FA' }}>
         No textual diff available
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto" style={{ borderTop: '1px solid #30363D' }}>
+    <div className="overflow-x-auto" style={{ borderTop: '0.5px solid #D8DEE4', backgroundColor: '#FFFFFF' }}>
       {lines.map((line, index) => {
         const sign = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
         const color = line.kind === 'add'
-          ? '#116329'
+          ? '#1A7F37'
           : line.kind === 'delete'
-            ? '#82071E'
+            ? '#CF222E'
             : '#57606A';
-        const textColor = line.kind === 'context' ? '#C9D1D9' : '#F0F6FC';
+        const textColor = '#24292F';
         const backgroundColor = line.kind === 'add'
-          ? 'rgba(46, 160, 67, 0.16)'
+          ? '#E6FFEC'
           : line.kind === 'delete'
-            ? 'rgba(248, 81, 73, 0.14)'
-            : '#0D1117';
+            ? '#FFEBE9'
+            : '#FFFFFF';
 
         return (
           <div
@@ -361,13 +361,13 @@ export function UnifiedDiffView({ change }: { change: FileChange }) {
             style={{
               gridTemplateColumns: '40px 40px 28px minmax(0, 1fr)',
               backgroundColor,
-              borderTop: index === 0 ? undefined : '1px solid rgba(48, 54, 61, 0.32)',
+              borderTop: index === 0 ? undefined : '0.5px solid #D8DEE4',
             }}
           >
-            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7681', borderRight: '1px solid rgba(48, 54, 61, 0.35)' }}>
+            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7781', backgroundColor: '#F6F8FA', borderRight: '0.5px solid #D8DEE4' }}>
               {line.oldLine ?? ''}
             </div>
-            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7681', borderRight: '1px solid rgba(48, 54, 61, 0.35)' }}>
+            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7781', backgroundColor: '#F6F8FA', borderRight: '0.5px solid #D8DEE4' }}>
               {line.newLine ?? ''}
             </div>
             <div className="px-2 py-1 text-center text-xs select-none font-mono" style={{ color }}>

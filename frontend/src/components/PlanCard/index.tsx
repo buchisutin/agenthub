@@ -32,7 +32,7 @@ export function PlanCard({
   plan: PlanCardModel;
   onOpenTask?: (taskId: string) => void;
   onResumeFrom?: (planId: string, plannerTaskId: string) => void;
-  onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview' | 'summary') => void;
+  onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview') => void;
 }) {
   const completed = plan.items.filter((i) => i.status === 'completed').length;
   const total = plan.items.length;
@@ -48,7 +48,7 @@ export function PlanCard({
       <div className="px-5 py-4 space-y-3" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>
-            📋 协作计划
+            协作计划
           </div>
           <span className="hidden">Task Plan</span>
           <span className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
@@ -66,7 +66,7 @@ export function PlanCard({
         </div>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="space-y-4 px-5 py-4">
         {stagedItems.map((level, levelIndex) => {
           const waitingOn = Array.from(new Set(level.flatMap((item) => item.dependsOn ?? [])));
           return (
@@ -81,15 +81,15 @@ export function PlanCard({
                   </div>
                 </div>
               )}
-              <div className="space-y-2">
+              <div className="overflow-hidden rounded-lg" style={{ border: '0.5px solid var(--app-border)', backgroundColor: '#FFFFFF' }}>
                 {level.map((item) => {
           const runId = hasRunId(item.runId) ? item.runId : null;
           const plannerTaskId = item.plannerTaskId ?? `t${item.index}`;
           return (
             <div
               key={item.runId ?? item.taskId}
-              className="w-full rounded-lg px-3 py-3 text-left flex items-start justify-between gap-3"
-              style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)' }}
+              className="w-full px-4 py-3 text-left flex items-start justify-between gap-3"
+              style={{ borderTop: level.indexOf(item) === 0 ? undefined : '0.5px solid var(--app-border)' }}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">

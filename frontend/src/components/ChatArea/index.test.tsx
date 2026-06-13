@@ -621,7 +621,7 @@ describe('ChatArea mention fan-out', () => {
     expect(artifactButtons).toHaveLength(1);
 
     fireEvent.click(artifactButtons[0]!);
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
     fireEvent.click(screen.getByRole('button', { name: '启动预览' }));
 
     await waitFor(() => expect(mockedStartRunPreview).toHaveBeenCalledTimes(1));
@@ -673,7 +673,7 @@ describe('ChatArea mention fan-out', () => {
 
     const artifactButtons = await screen.findAllByRole('button', { name: '查看产物' });
     fireEvent.click(artifactButtons[1]!);
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
     fireEvent.click(screen.getByRole('button', { name: '启动预览' }));
 
     expect(await screen.findByText('preview failed')).toBeTruthy();
@@ -1178,7 +1178,7 @@ describe('ChatArea mention fan-out', () => {
     await waitFor(() => expect(mockedGetRunFileChanges).toHaveBeenCalledWith('run-preview-a'));
     expect(screen.getByText('src/page.tsx')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
     fireEvent.click(screen.getByRole('button', { name: '启动预览' }));
 
     await waitFor(() => expect(mockedStartRunPreview).toHaveBeenCalledWith('run-preview-a'));

@@ -56,7 +56,7 @@ const runningRun: ChatTimelineItem = {
 };
 
 describe('CollaborationOverview', () => {
-  it('shows task progress and active work', () => {
+  it('shows a compact collaboration status strip', () => {
     render(
       <CollaborationOverview
         plans={[plan]}
@@ -66,15 +66,14 @@ describe('CollaborationOverview', () => {
       />,
     );
 
-    expect(screen.getByText('当前协作')).toBeTruthy();
-    expect(screen.getByText('1 / 2')).toBeTruthy();
-    expect(screen.getByText('任务完成')).toBeTruthy();
-    expect(screen.getByText('Agent 运行中')).toBeTruthy();
-    expect(screen.getByText('Frontend UI')).toBeTruthy();
-    expect(screen.getByText('@frontend-agent')).toBeTruthy();
+    expect(screen.getByText('协作状态')).toBeTruthy();
+    expect(screen.getByText('1/2 任务完成')).toBeTruthy();
+    expect(screen.getByText('1 运行中')).toBeTruthy();
+    expect(screen.getByText('0 待处理')).toBeTruthy();
+    expect(screen.queryByText('Build the feature in stages')).toBeNull();
   });
 
-  it('shows an empty state before any plan or run exists', () => {
+  it('stays out of the way before any plan or run exists', () => {
     render(
       <CollaborationOverview
         plans={[]}
@@ -84,8 +83,8 @@ describe('CollaborationOverview', () => {
       />,
     );
 
-    expect(screen.getByText('还没有协作任务')).toBeTruthy();
-    expect(screen.getByText('发送 @orchestrator 或 @agent 开始。')).toBeTruthy();
+    expect(screen.queryByText('还没有协作任务')).toBeNull();
+    expect(screen.queryByText('发送 @orchestrator 或 @agent 开始。')).toBeNull();
   });
 
   it('surfaces failed runs as needs attention', () => {
@@ -98,7 +97,6 @@ describe('CollaborationOverview', () => {
       />,
     );
 
-    expect(screen.getAllByText('需要处理').length).toBeGreaterThan(0);
-    expect(screen.getByText('Frontend UI 失败')).toBeTruthy();
+    expect(screen.getByText('1 待处理')).toBeTruthy();
   });
 });

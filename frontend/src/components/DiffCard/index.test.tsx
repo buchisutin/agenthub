@@ -40,6 +40,8 @@ describe('DiffCard', () => {
     expect(screen.getByText('Added (1)')).toBeTruthy();
     expect(screen.getByText('Modified (1)')).toBeTruthy();
     expect(screen.queryByText('Deleted (0)')).toBeNull();
+    expect(screen.getByText('Code Review')).toBeTruthy();
+    expect(screen.queryByText('Unified Diff')).toBeNull();
     expect(screen.getByText('- before')).toBeTruthy();
     expect(screen.getByText('+ after')).toBeTruthy();
     expect(screen.getByText('+ a')).toBeTruthy();

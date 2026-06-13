@@ -80,7 +80,7 @@ export function ChatArea() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [showArtifactPanel, setShowArtifactPanel] = useState(false);
-  const [artifactTab, setArtifactTab] = useState<ArtifactTab>('tasks');
+  const [artifactTab, setArtifactTab] = useState<ArtifactTab>('diff');
   const [selectedArtifactRunId, setSelectedArtifactRunId] = useState<string | null>(null);
   const [artifactPanelWidth, setArtifactPanelWidth] = useState(DEFAULT_ARTIFACT_PANEL_WIDTH);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -146,7 +146,7 @@ export function ChatArea() {
     if (previousConvIdRef.current === convId) return;
     previousConvIdRef.current = convId;
     setShowArtifactPanel(false);
-    setArtifactTab('tasks');
+    setArtifactTab('diff');
     setSelectedArtifactRunId(null);
     setTasks([]);
     setAssignments([]);
@@ -177,7 +177,7 @@ export function ChatArea() {
 
   async function openTask(taskId: string) {
     setShowArtifactPanel(true);
-    setArtifactTab('tasks');
+    setArtifactTab('diff');
     setSelectedTaskId(taskId);
     await loadTaskDetail(taskId);
   }
@@ -363,7 +363,7 @@ export function ChatArea() {
             onClick={() => {
               const next = !showArtifactPanel;
               setShowArtifactPanel(next);
-              setArtifactTab('tasks');
+              setArtifactTab('diff');
               if (next && convId) void loadTasksPanelData(convId);
               if (!next) {
                 setSelectedTaskId(null);

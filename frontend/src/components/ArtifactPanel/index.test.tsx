@@ -86,7 +86,7 @@ const run: ChatTimelineItem = {
 };
 
 describe('ArtifactPanel', () => {
-  it('renders task artifacts by default', () => {
+  it('renders an understandable execution plan tab', () => {
     render(
       <ArtifactPanel
         open
@@ -101,11 +101,19 @@ describe('ArtifactPanel', () => {
     );
 
     expect(screen.getByText('成果面板')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '代码改动' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '网页预览' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '执行计划' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Summary' })).toBeNull();
+    expect(screen.getByText('执行计划')).toBeTruthy();
+    expect(screen.getByText('任务')).toBeTruthy();
+    expect(screen.getByText('负责 Agent')).toBeTruthy();
+    expect(screen.getByText('状态')).toBeTruthy();
     expect(screen.getByText('Frontend UI')).toBeTruthy();
     expect(screen.getByText('@frontend-agent')).toBeTruthy();
   });
 
-  it('loads diff files when Diff tab is active', async () => {
+  it('loads code changes when the code changes tab is active', async () => {
     render(
       <ArtifactPanel
         open
@@ -125,6 +133,7 @@ describe('ArtifactPanel', () => {
       expect(screen.getByText('src/App.tsx')).toBeTruthy();
       expect(screen.getByText('- before')).toBeTruthy();
       expect(screen.getByText('+ after')).toBeTruthy();
+      expect(screen.getByText('代码改动')).toBeTruthy();
     });
   });
 

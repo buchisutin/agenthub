@@ -14,11 +14,20 @@ function formatTime(iso: string) {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 }
 
-export function Sidebar() {
+export type SidebarMode = 'expanded' | 'collapsed' | 'floating';
+
+type SidebarProps = {
+  mode: SidebarMode;
+  onCollapse: () => void;
+  onExpand: () => void;
+  onFloatingMouseEnter?: () => void;
+  onFloatingMouseLeave?: () => void;
+};
+
+export function Sidebar({ mode, onCollapse, onExpand, onFloatingMouseEnter, onFloatingMouseLeave }: SidebarProps) {
   const { state, dispatch } = useApp();
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   const sortedConvs = [...state.conversations].sort(
@@ -67,77 +76,68 @@ export function Sidebar() {
     }
   }
 
+  if (mode === 'collapsed') return null;
+
+  const isFloating = mode === 'floating';
+
   return (
     <aside
-      className={`${collapsed ? 'w-12' : 'w-72'} flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl transition-[width] duration-150`}
+      className={
+        isFloating
+          ? 'fixed left-0 top-3 z-50 h-[calc(100%-24px)] w-72 flex min-h-0 flex-col overflow-hidden rounded-r-xl animate-slide-in'
+          : 'w-72 flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl'
+      }
       style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
+      onMouseEnter={isFloating ? onFloatingMouseEnter : undefined}
+      onMouseLeave={isFloating ? onFloatingMouseLeave : undefined}
     >
       <div
-        className={collapsed ? 'px-2 py-3 relative' : 'px-5 pt-5 pb-4 relative'}
+        className="px-5 pt-5 pb-4 relative group"
         style={{
           borderBottom: '0.5px solid var(--app-border)',
-          boxShadow: scrolled && !collapsed ? '0 2px 8px rgba(0,0,0,0.06)' : undefined,
+          boxShadow: scrolled ? '0 2px 8px rgba(0,0,0,0.06)' : undefined,
         }}
       >
-        <div className={collapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between gap-2'}>
-          {!collapsed && <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>}
-
-          {collapsed && (
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>
+            {!isFloating && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                aria-label="收起侧边栏"
+                className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center w-5 h-5 rounded text-xs hover:opacity-100"
+                style={{ color: 'var(--app-text-hint)' }}
+              >
+                ‹‹
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              type="button"
-              onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
-              aria-label="展开会话列表"
-              className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:opacity-90"
-              style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)', backgroundColor: 'var(--card-bg)' }}
+              onClick={handleNewConversation}
+              className="w-6 h-6 flex items-center justify-center rounded text-base leading-none transition-colors hover:opacity-90"
+              style={{ color: 'var(--app-text-hint)' }}
+              title="新建会话"
+              aria-label="新建会话"
             >
-              ›
+              +
             </button>
-          )}
-
-          <button
-            onClick={handleNewConversation}
-            className="w-6 h-6 flex items-center justify-center rounded text-base leading-none transition-colors hover:opacity-90"
-            style={{ color: 'var(--app-text-hint)' }}
-            title="新建会话"
-            aria-label="新建会话"
-          >
-            +
-          </button>
+            {isFloating && (
+              <button
+                type="button"
+                onClick={onExpand}
+                aria-label="固定侧边栏"
+                className="flex h-6 w-6 items-center justify-center rounded text-xs transition-colors hover:opacity-90"
+                style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}
+              >
+                ››
+              </button>
+            )}
+          </div>
         </div>
-
-        {!collapsed && (
-          <button
-            type="button"
-            onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
-            aria-label="收起会话列表"
-            className="absolute right-0 inset-y-0 w-6 flex items-center justify-center text-sm transition-colors hover:opacity-90 rounded-r-xl"
-            style={{ color: 'var(--app-text-secondary)', borderLeft: '0.5px solid var(--app-border)' }}
-          >
-            ‹
-          </button>
-        )}
       </div>
 
-      {collapsed ? (
-        <div className="flex-1 px-2 py-3">
-          {sortedConvs.slice(0, 6).map((conv) => (
-            <button
-              key={conv.id}
-              type="button"
-              onClick={() => void selectConversation(conv)}
-              title={conv.title || '未命名会话'}
-              className="mb-2 flex h-8 w-8 items-center justify-center rounded text-xs font-medium"
-              style={{
-                backgroundColor: state.selectedConvId === conv.id ? '#EFF8FF' : 'transparent',
-                color: 'var(--app-text)',
-                border: state.selectedConvId === conv.id ? '0.5px solid #BFDBFE' : '0.5px solid transparent',
-              }}
-            >
-              {(conv.title || '未').trim().charAt(0).toUpperCase()}
-            </button>
-          ))}
-        </div>
-      ) : (
       <div className="flex-1 overflow-y-auto px-2 py-3" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
         {state.loadingConvs ? (
           <div className="p-4 space-y-3">
@@ -171,7 +171,6 @@ export function Sidebar() {
           ))
         )}
       </div>
-      )}
 
       {deleteTarget && (
         <DeleteConversationDialog

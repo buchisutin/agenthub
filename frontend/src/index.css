@@ -88,6 +88,11 @@ select {
   background: var(--app-text-tertiary);
 }
 
+@keyframes slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
 .hljs {
   background: var(--card-subtle) !important;
   color: var(--app-text) !important;

@@ -123,6 +123,8 @@ describe('ArtifactPanel', () => {
     await waitFor(() => {
       expect(api.getRunFileChanges).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('src/App.tsx')).toBeTruthy();
+      expect(screen.getByText('- before')).toBeTruthy();
+      expect(screen.getByText('+ after')).toBeTruthy();
     });
   });
 

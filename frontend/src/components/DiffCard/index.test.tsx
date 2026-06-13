@@ -40,8 +40,11 @@ describe('DiffCard', () => {
     expect(screen.getByText('Added (1)')).toBeTruthy();
     expect(screen.getByText('Modified (1)')).toBeTruthy();
     expect(screen.queryByText('Deleted (0)')).toBeNull();
-    expect(screen.getAllByText('Before')).toHaveLength(2);
-    expect(screen.getAllByText('After')).toHaveLength(2);
+    expect(screen.getByText('- before')).toBeTruthy();
+    expect(screen.getByText('+ after')).toBeTruthy();
+    expect(screen.getByText('+ a')).toBeTruthy();
+    expect(screen.queryByText('Before')).toBeNull();
+    expect(screen.queryByText('After')).toBeNull();
   });
 
   it('shows empty state when no file changes are returned', async () => {
@@ -79,8 +82,8 @@ describe('DiffCard', () => {
     render(<DiffCard runId="run-4" />);
 
     await screen.findByText('src/four.ts');
-    expect(screen.queryByText('Before')).toBeNull();
-    expect(screen.queryByText('After')).toBeNull();
+    expect(screen.queryByText('- before')).toBeNull();
+    expect(screen.queryByText('+ after')).toBeNull();
     expect(screen.getByText('Added (1)')).toBeTruthy();
     expect(screen.getByText('Modified (2)')).toBeTruthy();
     expect(screen.getByText('Deleted (1)')).toBeTruthy();
@@ -99,8 +102,23 @@ describe('DiffCard', () => {
     const secondButton = await screen.findByRole('button', { name: /src\/second\.ts/i });
     fireEvent.click(secondButton);
 
-    expect(screen.getAllByText('After')).toHaveLength(1);
-    expect(screen.getAllByText('Before')).toHaveLength(1);
+    expect(screen.getByText('- before')).toBeTruthy();
+    expect(screen.getByText('+ after')).toBeTruthy();
+  });
+
+  it('keeps unchanged shifted lines as context when a line is inserted', async () => {
+    mockedGetRunFileChanges.mockResolvedValue([
+      buildChange({
+        filePath: 'src/insert.ts',
+        oldContent: 'const a = 1;\nreturn a;\n',
+        newContent: 'const a = 1;\nconst b = 2;\nreturn a;\n',
+      }),
+    ]);
+
+    render(<DiffCard runId="run-insert" />);
+
+    expect(await screen.findByText('+ const b = 2;')).toBeTruthy();
+    expect(screen.queryByText('- return a;')).toBeNull();
   });
 
   it('gates large diffs behind an explicit load action', async () => {
@@ -115,11 +133,11 @@ describe('DiffCard', () => {
     render(<DiffCard runId="run-6" />);
 
     expect(await screen.findByText('Large diff, click to load')).toBeTruthy();
-    expect(screen.queryByText('After')).toBeNull();
+    expect(screen.queryByText('+ line 1')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /load diff for src\/huge\.ts/i }));
 
-    expect(await screen.findByText('After')).toBeTruthy();
+    expect(await screen.findByText('+ line 1')).toBeTruthy();
     expect(screen.queryByText('Large diff, click to load')).toBeNull();
   });
 

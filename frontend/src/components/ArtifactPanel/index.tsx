@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../services/api';
 import { Badge } from '../ui/Badge';
+import { UnifiedDiffView } from '../DiffCard';
 import { getStatusLabel, getStatusVariant } from '../ui/status';
 import type {
   Agent,
@@ -282,9 +283,8 @@ function DiffTab({ runId }: { runId: string | null }) {
             <code className="truncate text-xs" style={{ color: 'var(--app-text)' }}>{change.filePath}</code>
             <Badge variant="muted">{change.changeType}</Badge>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-            <pre className="max-h-40 overflow-auto rounded-md p-2" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}>{change.oldContent ?? ''}</pre>
-            <pre className="max-h-40 overflow-auto rounded-md p-2" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}>{change.newContent ?? ''}</pre>
+          <div className="mt-2 max-h-72 overflow-auto rounded-md" style={{ backgroundColor: '#0D1117', border: '0.5px solid #30363D' }}>
+            <UnifiedDiffView change={change} />
           </div>
         </div>
       ))}

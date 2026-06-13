@@ -104,7 +104,7 @@ export function DiffCard({
           Code Changes
         </div>
         <div className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-          Split Diff
+          Unified Diff
         </div>
       </div>
 
@@ -191,7 +191,7 @@ export function DiffCard({
                         </div>
                       )}
 
-                      {expanded && (!largeDiff || diffLoaded) && <SplitDiff change={change} />}
+                      {expanded && (!largeDiff || diffLoaded) && <UnifiedDiffView change={change} />}
                     </div>
                   );
                 })}
@@ -239,83 +239,146 @@ function getChangeTypeLabel(changeType: FileChange['changeType'] | DiffGroupKey)
   }
 }
 
-function SplitDiff({ change }: { change: FileChange }) {
-  const leftLines = change.oldContent.split('\n');
-  const rightLines = change.newContent.split('\n');
-  const rows = Math.max(leftLines.length, rightLines.length);
+type UnifiedDiffLine = {
+  kind: 'context' | 'add' | 'delete';
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+};
 
-  return (
-    <div className="grid grid-cols-2" style={{ borderTop: '1px solid #30363D' }}>
-      <DiffPane
-        title="Before"
-        lines={leftLines}
-        totalRows={rows}
-        emptyLabel={change.changeType === 'create' ? 'New file, no old content' : 'No old content'}
-      />
-      <DiffPane
-        title="After"
-        lines={rightLines}
-        totalRows={rows}
-        emptyLabel={change.changeType === 'delete' ? 'File deleted' : 'No new content'}
-        right
-      />
-    </div>
-  );
+function splitContentLines(content: string) {
+  if (!content) return [];
+  const lines = content.split('\n');
+  return lines.at(-1) === '' ? lines.slice(0, -1) : lines;
 }
 
-function DiffPane({
-  title,
-  lines,
-  totalRows,
-  emptyLabel,
-  right = false,
-}: {
-  title: string;
-  lines: string[];
-  totalRows: number;
-  emptyLabel: string;
-  right?: boolean;
-}) {
-  const isEmpty = lines.length === 1 && lines[0] === '';
+function buildUnifiedDiffLines(change: FileChange): UnifiedDiffLine[] {
+  const oldLines = splitContentLines(change.oldContent);
+  const newLines = splitContentLines(change.newContent);
+
+  if (change.changeType === 'create') {
+    return newLines.map((text, index) => ({
+      kind: 'add',
+      oldLine: null,
+      newLine: index + 1,
+      text,
+    }));
+  }
+
+  if (change.changeType === 'delete') {
+    return oldLines.map((text, index) => ({
+      kind: 'delete',
+      oldLine: index + 1,
+      newLine: null,
+      text,
+    }));
+  }
+
+  const table = Array.from({ length: oldLines.length + 1 }, () =>
+    Array.from({ length: newLines.length + 1 }, () => 0),
+  );
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      table[oldIndex][newIndex] = oldLines[oldIndex] === newLines[newIndex]
+        ? table[oldIndex + 1][newIndex + 1] + 1
+        : Math.max(table[oldIndex + 1][newIndex], table[oldIndex][newIndex + 1]);
+    }
+  }
+
+  const result: UnifiedDiffLine[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldLines.length || newIndex < newLines.length) {
+    if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+      result.push({
+        kind: 'context',
+        oldLine: oldIndex + 1,
+        newLine: newIndex + 1,
+        text: oldLines[oldIndex],
+      });
+      oldIndex += 1;
+      newIndex += 1;
+      continue;
+    }
+    if (
+      newIndex < newLines.length
+      && (oldIndex >= oldLines.length || table[oldIndex][newIndex + 1] >= table[oldIndex + 1][newIndex])
+    ) {
+      result.push({
+        kind: 'add',
+        oldLine: null,
+        newLine: newIndex + 1,
+        text: newLines[newIndex],
+      });
+      newIndex += 1;
+      continue;
+    }
+    if (oldIndex < oldLines.length) {
+      result.push({
+        kind: 'delete',
+        oldLine: oldIndex + 1,
+        newLine: null,
+        text: oldLines[oldIndex],
+      });
+      oldIndex += 1;
+    }
+  }
+  return result;
+}
+
+export function UnifiedDiffView({ change }: { change: FileChange }) {
+  const lines = buildUnifiedDiffLines(change);
+
+  if (lines.length === 0) {
+    return (
+      <div className="px-4 py-3 text-xs italic" style={{ borderTop: '1px solid #30363D', color: '#6E7681' }}>
+        No textual diff available
+      </div>
+    );
+  }
 
   return (
-    <div style={{ borderLeft: right ? '1px solid #30363D' : undefined }}>
-      <div className="px-4 py-2 text-xs font-medium" style={{ color: '#8B949E', backgroundColor: '#161B22' }}>
-        {title}
-      </div>
-      {isEmpty ? (
-        <div className="px-4 py-3 text-xs italic" style={{ color: '#6E7681' }}>
-          {emptyLabel}
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          {Array.from({ length: totalRows }).map((_, index) => {
-            const line = lines[index] ?? '';
-            const backgroundColor = right
-              ? line ? 'rgba(46, 160, 67, 0.10)' : 'transparent'
-              : line ? 'rgba(248, 81, 73, 0.08)' : 'transparent';
+    <div className="overflow-x-auto" style={{ borderTop: '1px solid #30363D' }}>
+      {lines.map((line, index) => {
+        const sign = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
+        const color = line.kind === 'add'
+          ? '#116329'
+          : line.kind === 'delete'
+            ? '#82071E'
+            : '#57606A';
+        const textColor = line.kind === 'context' ? '#C9D1D9' : '#F0F6FC';
+        const backgroundColor = line.kind === 'add'
+          ? 'rgba(46, 160, 67, 0.16)'
+          : line.kind === 'delete'
+            ? 'rgba(248, 81, 73, 0.14)'
+            : '#0D1117';
 
-            return (
-              <div
-                key={`${title}-${index}`}
-                className="grid"
-                style={{
-                  gridTemplateColumns: '48px 1fr',
-                  backgroundColor,
-                  borderTop: index === 0 ? undefined : '1px solid rgba(48, 54, 61, 0.35)',
-                }}
-              >
-                <div className="px-3 py-1 text-right text-xs select-none" style={{ color: '#6E7681', borderRight: '1px solid rgba(48, 54, 61, 0.35)' }}>
-                  {line || index < lines.length ? index + 1 : ''}
-                </div>
-                <pre className="px-3 py-1 text-xs whitespace-pre-wrap break-all font-mono" style={{ color: '#C9D1D9', margin: 0 }}>
-                  {line}
-                </pre>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        return (
+          <div
+            key={`${line.kind}-${index}-${line.text}`}
+            className="grid"
+            style={{
+              gridTemplateColumns: '40px 40px 28px minmax(0, 1fr)',
+              backgroundColor,
+              borderTop: index === 0 ? undefined : '1px solid rgba(48, 54, 61, 0.32)',
+            }}
+          >
+            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7681', borderRight: '1px solid rgba(48, 54, 61, 0.35)' }}>
+              {line.oldLine ?? ''}
+            </div>
+            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7681', borderRight: '1px solid rgba(48, 54, 61, 0.35)' }}>
+              {line.newLine ?? ''}
+            </div>
+            <div className="px-2 py-1 text-center text-xs select-none font-mono" style={{ color }}>
+              {sign}
+            </div>
+            <pre className="px-2 py-1 text-xs whitespace-pre-wrap break-all font-mono" style={{ color: textColor, margin: 0 }}>
+              {`${sign} ${line.text}`}
+            </pre>
+          </div>
+        );
+      })}
     </div>
   );
 }

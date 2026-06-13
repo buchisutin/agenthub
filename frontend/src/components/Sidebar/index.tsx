@@ -77,18 +77,23 @@ export function Sidebar() {
         style={{
           borderBottom: '0.5px solid var(--app-border)',
           boxShadow: scrolled && !collapsed ? '0 2px 8px rgba(0,0,0,0.06)' : undefined,
-        }}>
+        }}
+      >
         <div className={collapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between gap-2'}>
           {!collapsed && <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>}
-          <button
-            type="button"
-            onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
-            aria-label={collapsed ? '展开会话列表' : '收起会话列表'}
-            className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:opacity-90"
-            style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)', backgroundColor: 'var(--card-bg)' }}
-          >
-            {collapsed ? '›' : '‹'}
-          </button>
+
+          {collapsed && (
+            <button
+              type="button"
+              onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
+              aria-label="展开会话列表"
+              className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:opacity-90"
+              style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)', backgroundColor: 'var(--card-bg)' }}
+            >
+              ›
+            </button>
+          )}
+
           <button
             onClick={handleNewConversation}
             className="w-6 h-6 flex items-center justify-center rounded text-base leading-none transition-colors hover:opacity-90"
@@ -99,6 +104,18 @@ export function Sidebar() {
             +
           </button>
         </div>
+
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => { setCollapsed((value) => !value); setScrolled(false); }}
+            aria-label="收起会话列表"
+            className="absolute right-0 inset-y-0 w-6 flex items-center justify-center text-sm transition-colors hover:opacity-90 rounded-r-xl"
+            style={{ color: 'var(--app-text-secondary)', borderLeft: '0.5px solid var(--app-border)' }}
+          >
+            ‹
+          </button>
+        )}
       </div>
 
       {collapsed ? (

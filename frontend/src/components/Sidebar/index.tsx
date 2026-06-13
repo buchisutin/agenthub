@@ -67,10 +67,10 @@ export function Sidebar() {
 
   return (
     <aside
-      className="w-72 flex-shrink-0 flex min-h-0 flex-col h-full"
-      style={{ backgroundColor: 'var(--panel-bg)', borderRight: '0.5px solid var(--app-border)' }}
+      className="w-72 flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl"
+      style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
     >
-      <div className="px-4 pt-4 pb-3" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
+      <div className="px-5 pt-5 pb-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
         <div className="flex items-center justify-between">
           <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>
           <button
@@ -84,7 +84,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto px-2 py-3">
         {state.loadingConvs ? (
           <div className="p-4 space-y-3">
             {[1, 2, 3].map((i) => (
@@ -142,10 +142,10 @@ function ConversationItem({
 }) {
   return (
     <div
-      className="w-full text-left px-4 py-3 transition-colors flex items-center gap-2 group"
+      className="w-full rounded-lg px-3 py-3 text-left transition-colors flex items-center gap-2 group"
       style={{
         backgroundColor: active ? '#EFF8FF' : 'transparent',
-        borderLeft: active ? '2px solid var(--app-accent)' : '2px solid transparent',
+        boxShadow: active ? 'inset 2px 0 0 var(--app-accent)' : undefined,
       }}
       onMouseEnter={(e) => {
         if (!active) {

@@ -19,6 +19,7 @@ interface ArtifactPanelProps {
   open: boolean;
   activeTab: ArtifactTab;
   selectedRunId?: string | null;
+  width?: number;
   plans: PlanCardModel[];
   timeline: ChatTimelineItem[];
   agents: Agent[];
@@ -29,6 +30,15 @@ interface ArtifactPanelProps {
   onClose: () => void;
   onTabChange: (tab: ArtifactTab) => void;
   onOpenTask: (taskId: string) => void;
+  onWidthChange?: (width: number) => void;
+}
+
+export const DEFAULT_ARTIFACT_PANEL_WIDTH = 420;
+export const MIN_ARTIFACT_PANEL_WIDTH = 340;
+export const MAX_ARTIFACT_PANEL_WIDTH = 760;
+
+function clampPanelWidth(width: number) {
+  return Math.min(MAX_ARTIFACT_PANEL_WIDTH, Math.max(MIN_ARTIFACT_PANEL_WIDTH, width));
 }
 
 function agentName(agentId: string | null | undefined, agents: Agent[]) {
@@ -75,6 +85,7 @@ export function ArtifactPanel({
   open,
   activeTab,
   selectedRunId,
+  width,
   plans,
   timeline,
   agents,
@@ -85,19 +96,67 @@ export function ArtifactPanel({
   onClose,
   onTabChange,
   onOpenTask,
+  onWidthChange,
 }: ArtifactPanelProps) {
+  const [internalWidth, setInternalWidth] = useState(DEFAULT_ARTIFACT_PANEL_WIDTH);
   const runId = getSelectedRunId({ selectedRunId, timeline, plans });
   const completedRuns = timeline.filter((item) => item.status === 'completed').length;
   const attentionRuns = timeline.filter((item) => item.status === 'failed' || item.status === 'interrupted').length;
+  const panelWidth = clampPanelWidth(width ?? internalWidth);
+
+  function setPanelWidth(nextWidth: number) {
+    const clampedWidth = clampPanelWidth(nextWidth);
+    if (onWidthChange) {
+      onWidthChange(clampedWidth);
+    } else {
+      setInternalWidth(clampedWidth);
+    }
+  }
+
+  function handleResizeStart(e: React.MouseEvent<HTMLButtonElement>) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      setPanelWidth(startWidth + startX - moveEvent.clientX);
+    }
+
+    function handleMouseUp() {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
 
   if (!open) return null;
 
   return (
     <aside
-      className="absolute inset-y-0 right-0 z-20 flex w-[380px] flex-col"
-      style={{ backgroundColor: 'var(--panel-bg)', borderLeft: '0.5px solid var(--app-border)' }}
+      aria-label="成果面板"
+      className="absolute bottom-4 right-4 top-4 z-20 flex flex-col overflow-hidden rounded-xl shadow-sm"
+      style={{
+        width: `${panelWidth}px`,
+        backgroundColor: 'var(--panel-bg)',
+        border: '0.5px solid var(--app-border)',
+      }}
     >
-      <div className="px-4 py-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
+      <button
+        type="button"
+        aria-label="调整成果面板宽度"
+        className="absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize"
+        style={{ backgroundColor: 'transparent' }}
+        onMouseDown={handleResizeStart}
+        onDoubleClick={() => setPanelWidth(DEFAULT_ARTIFACT_PANEL_WIDTH)}
+      />
+
+      <div className="px-6 py-5" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>
@@ -112,13 +171,13 @@ export function ArtifactPanel({
           </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-5 grid grid-cols-2 gap-3">
           <PanelMetric label="可验收 Run" value={completedRuns} />
           <PanelMetric label="待处理" value={attentionRuns} danger={attentionRuns > 0} />
         </div>
       </div>
 
-      <div className="flex gap-1 px-3 py-3" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
+      <div className="flex gap-1 px-5 py-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
         {(['tasks', 'diff', 'preview', 'summary'] as ArtifactTab[]).map((tab) => (
           <button
             key={tab}
@@ -136,7 +195,7 @@ export function ArtifactPanel({
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 overflow-y-auto p-5">
         {activeTab === 'tasks' && (
           <TasksTab
             plans={plans}
@@ -161,7 +220,7 @@ export function ArtifactPanel({
 function PanelMetric({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
   return (
     <div
-      className="rounded-lg px-3 py-2"
+      className="rounded-lg px-4 py-3"
       style={{
         backgroundColor: danger ? '#FEF2F2' : 'var(--card-bg)',
         border: danger ? '0.5px solid #FECACA' : '0.5px solid var(--app-border)',
@@ -207,13 +266,13 @@ function TasksTab({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {rows.map(({ planId, item }) => (
         <button
           key={`${planId}-${item.taskId || item.index}`}
           type="button"
           onClick={() => onOpenTask(item.taskId)}
-          className="w-full rounded-lg px-3 py-3 text-left"
+          className="w-full rounded-lg px-4 py-4 text-left"
           style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
         >
           <div className="flex items-start justify-between gap-3">
@@ -272,11 +331,11 @@ function DiffTab({ runId }: { runId: string | null }) {
   if (changes.length === 0) return <EmptyPanelText text="这个 Run 没有文件改动。" />;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {changes.map((change) => (
         <div
           key={change.filePath}
-          className="rounded-lg px-3 py-3"
+          className="rounded-lg px-4 py-4"
           style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
         >
           <div className="flex items-center justify-between gap-2">

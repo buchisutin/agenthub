@@ -150,4 +150,34 @@ describe('ArtifactPanel', () => {
       expect(screen.getByText('http://127.0.0.1:5174')).toBeTruthy();
     });
   });
+
+  it('lets users drag the panel wider and reset it by double click', () => {
+    render(
+      <ArtifactPanel
+        open
+        activeTab="tasks"
+        plans={[plan]}
+        timeline={[run]}
+        agents={[agent]}
+        onClose={() => {}}
+        onTabChange={() => {}}
+        onOpenTask={() => {}}
+      />,
+    );
+
+    const panel = screen.getByLabelText('成果面板');
+    const resizeHandle = screen.getByLabelText('调整成果面板宽度');
+
+    expect(panel.style.width).toBe('420px');
+
+    fireEvent.mouseDown(resizeHandle, { clientX: 900 });
+    fireEvent.mouseMove(window, { clientX: 820 });
+    fireEvent.mouseUp(window);
+
+    expect(panel.style.width).toBe('500px');
+
+    fireEvent.doubleClick(resizeHandle);
+
+    expect(panel.style.width).toBe('420px');
+  });
 });

@@ -10,7 +10,7 @@ import { OrchestratorPlanningCard, PlanCard } from '../PlanCard';
 import { RunCard } from '../RunCard';
 import { ConflictReviewCard } from '../ConflictReviewCard';
 import { TaskDetailDrawer } from '../TaskPanel';
-import { ArtifactPanel, type ArtifactTab } from '../ArtifactPanel';
+import { ArtifactPanel, DEFAULT_ARTIFACT_PANEL_WIDTH, type ArtifactTab } from '../ArtifactPanel';
 import { CollaborationOverview } from '../CollaborationOverview';
 import { WorkspaceSetup } from '../WorkspaceSetup';
 import { createTimelineItemFromRun } from '../../store/timeline';
@@ -82,6 +82,7 @@ export function ChatArea() {
   const [showArtifactPanel, setShowArtifactPanel] = useState(false);
   const [artifactTab, setArtifactTab] = useState<ArtifactTab>('tasks');
   const [selectedArtifactRunId, setSelectedArtifactRunId] = useState<string | null>(null);
+  const [artifactPanelWidth, setArtifactPanelWidth] = useState(DEFAULT_ARTIFACT_PANEL_WIDTH);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [assignments, setAssignments] = useState<TaskAssignment[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -349,8 +350,11 @@ export function ChatArea() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[var(--app-bg)]">
-      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-        <div className="px-6 pt-4 flex items-center justify-between gap-3">
+      <div
+        className="flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
+        style={{ paddingRight: showArtifactPanel ? artifactPanelWidth + 32 : 0 }}
+      >
+        <div className="px-8 pt-6 flex items-center justify-between gap-4">
           <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--app-text-secondary)' }}>
             Conversation Feed
           </div>
@@ -376,8 +380,8 @@ export function ChatArea() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="mx-auto w-full max-w-5xl space-y-4">
+        <div className="flex-1 overflow-y-auto px-8 py-6">
+          <div className="mx-auto w-full max-w-5xl space-y-6">
             <CollaborationOverview
               plans={plans}
               timeline={timeline}
@@ -408,7 +412,7 @@ export function ChatArea() {
           </div>
         </div>
 
-        <div className="sticky bottom-0 px-6 pb-5 pt-4" style={{ borderTop: '0.5px solid var(--app-border)', backgroundColor: 'var(--app-bg)' }}>
+        <div className="sticky bottom-0 px-8 pb-6 pt-5" style={{ borderTop: '0.5px solid var(--app-border)', backgroundColor: 'var(--app-bg)' }}>
           {!workspace && (
             <div className="mb-3 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: 'var(--status-warning)' }}>
               Bind a workspace path above to enable agent runs.
@@ -435,12 +439,14 @@ export function ChatArea() {
             open={showArtifactPanel}
             activeTab={artifactTab}
             selectedRunId={selectedArtifactRunId}
+            width={artifactPanelWidth}
             tasks={tasks}
             assignments={assignments}
             agents={state.agents}
             plans={plans}
             timeline={timeline}
             onOpenTask={openTask}
+            onWidthChange={setArtifactPanelWidth}
             onTabChange={(tab) => {
               setArtifactTab(tab);
               if (tab === 'tasks' && convId) void loadTasksPanelData(convId);
@@ -725,7 +731,7 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
         )}
 
         <div
-          className="rounded-2xl px-4 py-3"
+          className="rounded-2xl px-5 py-4"
           style={{
             backgroundColor: isUser ? '#EFF8FF' : '#FFFFFF',
             color: 'var(--app-text)',

@@ -6,9 +6,12 @@ import { Toast, ConnectionBanner } from './components/Toast';
 
 function AppLayout() {
   return (
-    <div className="h-full flex overflow-hidden bg-[var(--app-bg)] text-[var(--app-text)]">
+    <div className="h-full flex gap-3 overflow-hidden bg-[var(--app-bg)] p-3 text-[var(--app-text)]">
       <Sidebar />
-      <div className="flex-1 flex min-h-0 flex-col min-w-0">
+      <div
+        className="flex-1 flex min-h-0 flex-col min-w-0 overflow-hidden rounded-xl"
+        style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
+      >
         <TopBar />
         <ConnectionBanner />
         <ChatArea />

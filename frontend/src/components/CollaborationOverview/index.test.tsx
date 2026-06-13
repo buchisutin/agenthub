@@ -67,8 +67,8 @@ describe('CollaborationOverview', () => {
       />,
     );
 
-    expect(screen.getByText('协作状态')).toBeTruthy();
-    expect(screen.getByText('1/2 任务完成')).toBeTruthy();
+    expect(screen.queryByText('协作状态')).toBeNull();
+    expect(screen.getByText('1/2 完成')).toBeTruthy();
     expect(screen.getByText('1 运行中')).toBeTruthy();
     expect(screen.getByText('0 待处理')).toBeTruthy();
     expect(screen.queryByText('Build the feature in stages')).toBeNull();

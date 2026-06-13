@@ -37,13 +37,12 @@ export function CollaborationOverview({
   return (
     <section
       aria-label="协作状态"
-      className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-3"
-      style={{ backgroundColor: 'rgba(250, 250, 249, 0.96)', border: '0.5px solid var(--app-border)', backdropFilter: 'blur(8px)' }}
+      className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-2"
+      style={{ backgroundColor: '#FFFFFF', borderTop: '0.5px solid var(--app-border)', borderBottom: '0.5px solid var(--app-border)' }}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm">
-        <span className="font-medium" style={{ color: 'var(--app-text)' }}>协作状态</span>
-        <span style={{ color: 'var(--app-text-secondary)' }}>{completedTasks}/{totalTasks} 任务完成</span>
-        <span style={{ color: 'var(--app-text-secondary)' }}>{activeRuns.length} 运行中</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-3 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+        <span>{completedTasks}/{totalTasks} 完成</span>
+        <span>{activeRuns.length} 运行中</span>
         <span style={{ color: attentionRuns.length > 0 ? '#991B1B' : 'var(--app-text-secondary)' }}>{attentionRuns.length} 待处理</span>
         {activeRuns[0] ? (
           <Badge variant={getStatusVariant(activeRuns[0].status)}>{getStatusLabel(activeRuns[0].status)}</Badge>

@@ -1,0 +1,29 @@
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Local runtime data
+.agenthub/
+.codegraph/
+server/agenthub-local.sqlite
+server/*.sqlite
+server/*.sqlite-*
+
+# Environment and local machine config
+.env
+.env.*
+!.env.example
+.claude/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

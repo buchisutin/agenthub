@@ -92,4 +92,17 @@ describe('Sidebar new conversation navigation', () => {
     expect(socketService.leaveConversation).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith({ type: 'SELECT_CONVERSATION', payload: null });
   });
+
+  it('collapses the conversation list to prioritize the chat area', () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByLabelText('收起会话列表'));
+
+    expect(screen.queryByText('agenthub-test1')).toBeNull();
+    expect(screen.getByLabelText('展开会话列表')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('展开会话列表'));
+
+    expect(screen.getByText('agenthub-test1')).toBeTruthy();
+  });
 });

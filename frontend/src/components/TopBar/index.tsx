@@ -53,11 +53,11 @@ export function TopBar() {
 
   return (
     <header
-      className="flex items-start justify-between px-6 py-5 flex-shrink-0 gap-4"
+      className="flex items-center justify-between px-6 py-3 flex-shrink-0 gap-4"
       style={{ backgroundColor: 'var(--card-bg)', borderBottom: '0.5px solid var(--app-border)' }}
     >
-      <div className="min-w-0 flex-1 space-y-2">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-3 min-w-0 text-[13px]">
           <h1 className="text-[15px] font-medium truncate" style={{ color: 'var(--app-text)' }}>
             {conv?.title || 'AgentHub'}
           </h1>
@@ -88,15 +88,19 @@ export function TopBar() {
               Runtime 不可用
             </span>
           )}
-        </div>
-
-        {workspaceLabel && (
-          <div className="flex items-center gap-2 flex-wrap text-[12px]" style={{ color: 'var(--app-text-secondary)' }}>
-            <span aria-hidden="true" style={{ color: 'var(--color-text-hint)' }}>⌂</span>
-            <span title={workspace?.root_path}>{workspaceLabel}</span>
+          {workspaceLabel && (
+            <>
+              <span className="flex-shrink-0" style={{ color: 'var(--app-text-tertiary)' }}>·</span>
+              <span className="min-w-0 truncate text-[12px]" title={workspace?.root_path} style={{ color: 'var(--app-text-secondary)' }}>
+                {workspaceLabel}
+              </span>
+            </>
+          )}
+          {workspaceLabel && (
+            <>
             {wsValidationOrNull?.isGitRepo && (
               <span
-                className="px-2 py-0.5 rounded-full text-[11px]"
+                className="flex-shrink-0 px-2 py-0.5 rounded-full text-[11px]"
                 style={{ backgroundColor: 'rgba(5, 150, 105, 0.08)', color: 'var(--status-success)' }}
               >
                 git
@@ -104,22 +108,23 @@ export function TopBar() {
             )}
             {wsValidationOrNull && !wsValidationOrNull.isGitRepo && (
               <span
-                className="px-2 py-0.5 rounded-full text-[11px]"
+                className="flex-shrink-0 px-2 py-0.5 rounded-full text-[11px]"
                 style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text-secondary)' }}
               >
                 no git
               </span>
             )}
-          </div>
-        )}
-        {!workspaceLabel && !state.selectedConvId && (
-          <div className="text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
+            </>
+          )}
+          {!workspaceLabel && !state.selectedConvId && (
+          <span className="text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
             选择会话并绑定工作区
-          </div>
-        )}
+          </span>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 flex-shrink-0 self-start">
+      <div className="flex items-center gap-2 flex-shrink-0">
         <button
           type="button"
           onClick={() => setShowAgentSettings(true)}

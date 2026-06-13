@@ -18,6 +18,7 @@ export function Sidebar() {
   const { state, dispatch } = useApp();
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   const sortedConvs = [...state.conversations].sort(
     (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
@@ -67,23 +68,53 @@ export function Sidebar() {
 
   return (
     <aside
-      className="w-72 flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl"
+      className={`${collapsed ? 'w-12' : 'w-72'} flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl transition-[width] duration-150`}
       style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
     >
-      <div className="px-5 pt-5 pb-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
-        <div className="flex items-center justify-between">
-          <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>
+      <div className={collapsed ? 'px-2 py-3' : 'px-5 pt-5 pb-4'} style={{ borderBottom: '0.5px solid var(--app-border)' }}>
+        <div className={collapsed ? 'flex flex-col items-center gap-2' : 'flex items-center justify-between gap-2'}>
+          {!collapsed && <span className="text-[13px] font-medium" style={{ color: 'var(--app-text)' }}>会话</span>}
+          <button
+            type="button"
+            onClick={() => setCollapsed((value) => !value)}
+            aria-label={collapsed ? '展开会话列表' : '收起会话列表'}
+            className="flex h-7 w-7 items-center justify-center rounded text-sm transition-colors hover:opacity-90"
+            style={{ color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)', backgroundColor: 'var(--card-bg)' }}
+          >
+            {collapsed ? '›' : '‹'}
+          </button>
           <button
             onClick={handleNewConversation}
             className="w-6 h-6 flex items-center justify-center rounded text-base leading-none transition-colors hover:opacity-90"
             style={{ color: 'var(--app-text-hint)' }}
             title="新建会话"
+            aria-label="新建会话"
           >
             +
           </button>
         </div>
       </div>
 
+      {collapsed ? (
+        <div className="flex-1 px-2 py-3">
+          {sortedConvs.slice(0, 6).map((conv) => (
+            <button
+              key={conv.id}
+              type="button"
+              onClick={() => void selectConversation(conv)}
+              title={conv.title || '未命名会话'}
+              className="mb-2 flex h-8 w-8 items-center justify-center rounded text-xs font-medium"
+              style={{
+                backgroundColor: state.selectedConvId === conv.id ? '#EFF8FF' : 'transparent',
+                color: 'var(--app-text)',
+                border: state.selectedConvId === conv.id ? '0.5px solid #BFDBFE' : '0.5px solid transparent',
+              }}
+            >
+              {(conv.title || '未').trim().charAt(0).toUpperCase()}
+            </button>
+          ))}
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto px-2 py-3">
         {state.loadingConvs ? (
           <div className="p-4 space-y-3">
@@ -117,6 +148,7 @@ export function Sidebar() {
           ))
         )}
       </div>
+      )}
 
       {deleteTarget && (
         <DeleteConversationDialog

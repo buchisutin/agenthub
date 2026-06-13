@@ -36,8 +36,9 @@ export function CollaborationOverview({
 
   return (
     <section
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-3"
-      style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
+      aria-label="协作状态"
+      className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg px-4 py-3"
+      style={{ backgroundColor: 'rgba(250, 250, 249, 0.96)', border: '0.5px solid var(--app-border)', backdropFilter: 'blur(8px)' }}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-3 text-sm">
         <span className="font-medium" style={{ color: 'var(--app-text)' }}>协作状态</span>
@@ -51,19 +52,11 @@ export function CollaborationOverview({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => onOpenArtifacts('tasks')}
-          className="text-xs hover:underline"
-          style={{ color: 'var(--app-text-secondary)' }}
-        >
-          查看计划
-        </button>
-        <button
-          type="button"
           onClick={() => onOpenArtifacts(completedRuns > 0 ? 'diff' : 'tasks')}
-          className="text-xs hover:underline"
+          className="rounded-md px-3 py-1.5 text-xs font-medium"
           style={{ color: 'var(--app-accent)' }}
         >
-          查看成果
+          成果
         </button>
       </div>
     </section>

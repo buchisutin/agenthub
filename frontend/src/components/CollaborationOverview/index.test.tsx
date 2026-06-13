@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { CollaborationOverview } from './index';
 import type { ChatTimelineItem, PlanCardModel } from '../../types';
 
@@ -57,12 +57,13 @@ const runningRun: ChatTimelineItem = {
 
 describe('CollaborationOverview', () => {
   it('shows a compact collaboration status strip', () => {
+    const onOpenArtifacts = vi.fn();
     render(
       <CollaborationOverview
         plans={[plan]}
         timeline={[runningRun]}
         activeRunIds={['run-2']}
-        onOpenArtifacts={() => {}}
+        onOpenArtifacts={onOpenArtifacts}
       />,
     );
 
@@ -71,6 +72,13 @@ describe('CollaborationOverview', () => {
     expect(screen.getByText('1 运行中')).toBeTruthy();
     expect(screen.getByText('0 待处理')).toBeTruthy();
     expect(screen.queryByText('Build the feature in stages')).toBeNull();
+    expect(screen.queryByRole('button', { name: '查看计划' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '查看成果' })).toBeNull();
+    expect(screen.getByRole('button', { name: '成果' })).toBeTruthy();
+    expect(screen.getByLabelText('协作状态').className).toContain('sticky');
+
+    fireEvent.click(screen.getByRole('button', { name: '成果' }));
+    expect(onOpenArtifacts).toHaveBeenCalledWith('tasks');
   });
 
   it('stays out of the way before any plan or run exists', () => {

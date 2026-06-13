@@ -354,33 +354,7 @@ export function ChatArea() {
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
         style={{ paddingRight: showArtifactPanel ? artifactPanelWidth + 32 : 0 }}
       >
-        <div className="px-8 pt-6 flex items-center justify-between gap-4">
-          <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--app-text-secondary)' }}>
-            Conversation Feed
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !showArtifactPanel;
-              setShowArtifactPanel(next);
-              setArtifactTab('diff');
-              if (next && convId) void loadTasksPanelData(convId);
-              if (!next) {
-                setSelectedTaskId(null);
-                setTaskDetail(null);
-                setTaskDetailError(null);
-                setTaskActionError(null);
-                setSelectedArtifactRunId(null);
-              }
-            }}
-            className="px-3 py-2 rounded-lg text-sm font-medium"
-            style={{ backgroundColor: 'var(--card-bg)', color: 'var(--app-text)', border: '0.5px solid var(--app-border)' }}
-          >
-            成果
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-8 py-6">
+        <div className="flex-1 overflow-y-auto px-8 py-5">
           <div className="mx-auto w-full max-w-5xl space-y-6">
             <CollaborationOverview
               plans={plans}

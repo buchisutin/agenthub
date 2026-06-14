@@ -1314,8 +1314,8 @@ describe('ChatArea mention fan-out', () => {
       timeline: { 'conv-1': runs },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '成果' }));
-    await waitFor(() => expect(screen.getByText('成果面板')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
     expect(screen.getAllByText('前端页面').length).toBeGreaterThanOrEqual(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
@@ -1807,8 +1807,8 @@ describe('ChatArea mention fan-out', () => {
       </AppContext.Provider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '成果' }));
-    await waitFor(() => expect(screen.getByText('成果面板')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
     await waitFor(() => expect(screen.getByText('最新 Run')).toBeTruthy());
 

@@ -100,7 +100,7 @@ describe('ArtifactPanel', () => {
       />,
     );
 
-    expect(screen.getByText('成果面板')).toBeTruthy();
+    expect(screen.queryByText('成果面板')).toBeNull();
     expect(screen.getByRole('button', { name: '代码改动' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '网页预览' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '执行计划' })).toBeTruthy();

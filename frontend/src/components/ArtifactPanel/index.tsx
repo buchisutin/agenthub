@@ -100,8 +100,6 @@ export function ArtifactPanel({
 }: ArtifactPanelProps) {
   const [internalWidth, setInternalWidth] = useState(DEFAULT_ARTIFACT_PANEL_WIDTH);
   const runId = getSelectedRunId({ selectedRunId, timeline, plans });
-  const completedRuns = timeline.filter((item) => item.status === 'completed').length;
-  const attentionRuns = timeline.filter((item) => item.status === 'failed' || item.status === 'interrupted').length;
   const panelWidth = clampPanelWidth(width ?? internalWidth);
 
   function setPanelWidth(nextWidth: number) {
@@ -156,20 +154,10 @@ export function ArtifactPanel({
         onDoubleClick={() => setPanelWidth(DEFAULT_ARTIFACT_PANEL_WIDTH)}
       />
 
-      <div className="px-6 py-5" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>
-              成果面板
-            </div>
-            <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              {completedRuns} 个 Run 已完成 · {attentionRuns} 个需要处理
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="text-sm" style={{ color: 'var(--app-text-secondary)' }}>
-            Close
-          </button>
-        </div>
+      <div className="flex items-center justify-end px-5 pt-4 pb-0">
+        <button type="button" onClick={onClose} className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+          Close
+        </button>
       </div>
 
       <div className="flex gap-1 px-5 py-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>

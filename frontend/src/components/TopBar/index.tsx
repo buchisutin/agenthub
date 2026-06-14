@@ -146,8 +146,8 @@ export function TopBar({ onOpenArtifacts }: TopBarProps) {
           <button
             type="button"
             onClick={() => onOpenArtifacts(completedRuns > 0 ? 'diff' : 'tasks')}
-            className="rounded-md px-2 py-1 text-xs font-medium transition-colors hover:opacity-90"
-            style={{ color: 'var(--app-accent)' }}
+            className="rounded-full px-3 py-1 text-xs font-medium transition-colors hover:opacity-90"
+            style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
           >
             成果
           </button>

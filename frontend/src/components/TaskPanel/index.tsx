@@ -3,22 +3,6 @@ import type { Agent, PlanCardModel, Task, TaskAssignment, TaskDetail } from '../
 import { Badge } from '../ui/Badge';
 import { getStatusLabel, getStatusVariant } from '../ui/status';
 
-function getStatusTone(status: string) {
-  if (status === 'completed') {
-    return { color: '#3FB950', background: 'rgba(46, 160, 67, 0.16)' };
-  }
-  if (status === 'failed' || status === 'interrupted') {
-    return { color: '#F85149', background: 'rgba(248, 81, 73, 0.16)' };
-  }
-  if (status === 'cancelled') {
-    return { color: '#8B949E', background: 'rgba(139, 148, 158, 0.16)' };
-  }
-  if (status === 'running' || status === 'queued') {
-    return { color: '#E3B341', background: 'rgba(210, 153, 34, 0.18)' };
-  }
-  return { color: '#8B949E', background: 'rgba(139, 148, 158, 0.16)' };
-}
-
 function agentName(agentId: string | null | undefined, agents: Agent[]) {
   if (!agentId) return 'Unassigned';
   return agents.find((agent) => agent.id === agentId)?.name ?? agentId;
@@ -42,6 +26,14 @@ function getFilterGroup(status: string): TaskFilter {
 function matchesFilter(task: Task, filter: TaskFilter): boolean {
   if (filter === 'all') return true;
   return getFilterGroup(task.status) === filter;
+}
+
+function isUnstartedStatus(status: string) {
+  return status === 'pending' || status === 'assigned';
+}
+
+function isRunningStatus(status: string) {
+  return status === 'running' || status === 'queued' || status === 'in_progress';
 }
 
 function matchesSearch(task: Task, query: string, assignment: TaskAssignment | undefined, agents: Agent[]): boolean {
@@ -175,7 +167,7 @@ export function TaskPanel({
             Loading tasks...
           </div>
         ) : error ? (
-          <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'rgba(248, 81, 73, 0.10)', color: '#FCA5A5' }}>
+          <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--status-danger)', border: '0.5px solid var(--app-border)' }}>
             {error}
           </div>
         ) : tasks.length === 0 ? (
@@ -187,55 +179,70 @@ export function TaskPanel({
             {search ? 'No matching tasks' : `No ${FILTER_LABELS[filter].toLowerCase()} tasks`}
           </div>
         ) : (
-          filteredTasks.map((task) => {
+          filteredTasks.map((task, index) => {
             const assignment = assignmentByTaskId.get(task.id);
             const planItem = planItemByTaskId.get(task.id);
-            const taskTone = getStatusTone(task.status);
+            const muted = isUnstartedStatus(task.status);
+            const running = isRunningStatus(task.status);
             return (
-              <button
+              <div
                 key={task.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => onOpenTask(task.id)}
-                className="w-full rounded-xl px-3 py-3 text-left"
-                style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenTask(task.id);
+                  }
+                }}
+                className="relative flex w-full gap-3 px-1 py-3 text-left"
+                style={{ backgroundColor: 'transparent', opacity: muted ? 0.5 : 1 }}
               >
-                <div className="flex items-start gap-2">
-                  <span className="mt-1 h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: taskTone.color }} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate" style={{ color: 'var(--app-text)' }}>
-                      {task.title}
-                    </div>
-                    <div className="mt-1 text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
-                      @{planItem?.assignedAgentName ?? agentName(assignment?.agent_id, agents)}
-                    </div>
-                    {planItem?.dependsOn && planItem.dependsOn.length > 0 && (
-                      <div className="mt-1 text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
-                        等待 {planItem.dependsOn.join(', ')}
+                <div className="relative flex w-4 flex-shrink-0 justify-center">
+                  {index < filteredTasks.length - 1 && (
+                    <span className="absolute left-1/2 top-4 h-full w-px -translate-x-1/2" style={{ backgroundColor: 'var(--app-border)' }} />
+                  )}
+                  <span className="relative mt-1 h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--panel-bg)', border: '1px solid var(--app-border)' }} />
+                </div>
+                <div className="min-w-0 flex-1 pb-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className={`truncate text-sm ${running ? 'font-semibold' : 'font-medium'}`} style={{ color: 'var(--app-text)' }}>
+                        {task.title}
                       </div>
-                    )}
-                    <div className="mt-2 flex items-center gap-2 flex-wrap">
-                      {planItem && <Badge variant="muted">Task {planItem.index}</Badge>}
-                      <Badge variant={getStatusVariant(task.status)}>{getStatusLabel(task.status)}</Badge>
-                      {planItem?.plannerTaskId && onResumeFrom && task.status !== 'running' && assignment?.status !== 'running' && (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            const plan = plans.find((entry) => entry.items.some((item) => item.taskId === task.id));
-                            if (plan) {
-                              onResumeFrom(plan.id, planItem.plannerTaskId!);
-                            }
-                          }}
-                          className="text-xs hover:underline"
-                          style={{ color: 'var(--app-text-secondary)' }}
-                        >
-                          从此任务重新执行
-                        </button>
+                      <div className="mt-1 text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
+                        @{planItem?.assignedAgentName ?? agentName(assignment?.agent_id, agents)}
+                      </div>
+                      {planItem?.dependsOn && planItem.dependsOn.length > 0 && (
+                        <div className="mt-1 text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
+                          等待 {planItem.dependsOn.join(', ')}
+                        </div>
                       )}
                     </div>
+                    <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
+                      {planItem && <Badge variant="muted">Task {planItem.index}</Badge>}
+                      <Badge variant={getStatusVariant(task.status)}>{getStatusLabel(task.status)}</Badge>
+                    </div>
                   </div>
+                  {planItem?.plannerTaskId && onResumeFrom && task.status !== 'running' && assignment?.status !== 'running' && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const plan = plans.find((entry) => entry.items.some((item) => item.taskId === task.id));
+                        if (plan) {
+                          onResumeFrom(plan.id, planItem.plannerTaskId!);
+                        }
+                      }}
+                      className="mt-2 text-xs hover:underline"
+                      style={{ color: 'var(--app-text-secondary)' }}
+                    >
+                      从此任务重新执行
+                    </button>
+                  )}
                 </div>
-              </button>
+              </div>
             );
           })
         )}
@@ -286,10 +293,10 @@ export function TaskDetailDrawer({
     latestRun?.status !== 'queued';
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4">
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(26, 26, 24, 0.18)' }}>
       <div
         className="flex max-h-[80vh] w-full max-w-[480px] flex-col overflow-hidden rounded-xl"
-        style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)', boxShadow: '0 18px 48px rgba(26,26,24,0.16)' }}
+        style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
       >
         <div className="px-5 py-4 flex items-start justify-between gap-4" style={{ borderBottom: '0.5px solid var(--app-border)' }}>
           <div className="min-w-0">
@@ -408,7 +415,7 @@ export function TaskDetailDrawer({
             </div>
 
             {actionError && (
-              <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'rgba(248, 81, 73, 0.10)', color: '#FCA5A5' }}>
+              <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--status-danger)', border: '0.5px solid var(--app-border)' }}>
                 {actionError}
               </div>
             )}

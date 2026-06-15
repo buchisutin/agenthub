@@ -322,6 +322,32 @@ export interface PreviewStartResponse {
   port: number;
 }
 
+export type DeployStatus = "idle" | "running" | "succeeded" | "failed";
+
+export interface DeployLogEntry {
+  stream: "stdout" | "stderr";
+  chunk: string;
+  at: string;
+}
+
+export interface DeployScriptsResponse {
+  runId: string;
+  scripts: string[];
+  defaultScript: string | null;
+}
+
+export interface DeployRecord {
+  runId: string;
+  status: DeployStatus;
+  script: string;
+  command: string;
+  logs: DeployLogEntry[];
+  exitCode: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  errorMessage: string | null;
+}
+
 export interface TaskPlanItem {
   index: number;
   plannerTaskId?: string;

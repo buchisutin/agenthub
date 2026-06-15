@@ -19,6 +19,8 @@ import { createMessagesRouter } from "./modules/messages/messages.routes.js";
 import { MessagesService } from "./modules/messages/messages.service.js";
 import { createPreviewRouter } from "./modules/preview/preview.routes.js";
 import { PreviewService, type PreviewServiceDeps } from "./modules/preview/preview.service.js";
+import { createDeployRouter } from "./modules/deploy/deploy.routes.js";
+import { DeployService, type DeployServiceDeps } from "./modules/deploy/deploy.service.js";
 import { RunsService } from "./modules/runs/runs.service.js";
 import { createRunsRouter } from "./modules/runs/runs.routes.js";
 import { RunChangeApplicationService } from "./modules/runs/run-change-application.service.js";
@@ -48,6 +50,8 @@ export interface AgentHubServer {
 export interface AgentHubServerOptions {
   previewService?: PreviewService;
   previewServiceDeps?: PreviewServiceDeps;
+  deployService?: DeployService;
+  deployServiceDeps?: DeployServiceDeps;
   orchestratorService?: OrchestratorService;
   orchestratorPlanner?: HiddenPlannerDeps["plan"];
   workspaceIsolationService?: WorkspaceIsolationService;
@@ -91,6 +95,9 @@ export function createAgentHubServer(
   const previewService =
     options.previewService ??
     new PreviewService(runsService, workspacesService, options.previewServiceDeps);
+  const deployService =
+    options.deployService ??
+    new DeployService(runsService, workspacesService, options.deployServiceDeps);
   const mergeService = new MergeService(database, {
     getRun: (id) => runsService.getById(id),
     getRunWorkspace: (id) => runsService.getRunWorkspace(id),
@@ -139,6 +146,7 @@ export function createAgentHubServer(
   app.locals.workspacesService = workspacesService;
   app.locals.approvalService = approvalService;
   app.locals.previewService = previewService;
+  app.locals.deployService = deployService;
   app.locals.runtimeRegistry = runtimeRegistry;
   app.locals.mergeService = mergeService;
 
@@ -275,6 +283,7 @@ export function createAgentHubServer(
     ),
   );
   app.use("/", createPreviewRouter(previewService));
+  app.use("/", createDeployRouter(deployService));
   app.use("/agents", createAgentsRouter(agentsService));
   app.use("/", createRuntimesRouter(runtimeRegistry));
 
@@ -287,6 +296,7 @@ export function createAgentHubServer(
       if (typeof orchestratorService.close === "function") {
         orchestratorService.close();
       }
+      await deployService.cleanupAllDeploys();
       await previewService.cleanupAllPreviews();
       await runManager.close();
       await realtimeServer.close();

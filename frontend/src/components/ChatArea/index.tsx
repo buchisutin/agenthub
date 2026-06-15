@@ -430,16 +430,55 @@ export function ChatArea() {
                   ? <MessageCard key={entry.key} message={entry.message} agents={state.agents} />
                   : entry.kind === 'plan'
                     ? (
-                      <div key={entry.key} className="flex w-full justify-start mb-2">
-                        <div
-                          onClick={() => openArtifacts('tasks')}
-                          className="cursor-pointer flex items-center gap-3 px-4 py-3 rounded-xl transition-all hover:-translate-y-0.5"
-                          style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', boxShadow: '0 2px 4px rgba(37,99,235,0.05)' }}
-                        >
-                          <span className="text-lg">📋</span>
-                          <div>
-                            <div className="text-sm font-semibold" style={{ color: '#1D4ED8' }}>协作任务计划已生成</div>
-                            <div className="text-xs" style={{ color: '#3B82F6' }}>{entry.plan.items.length} 个执行阶段 · 点击在右侧查看详情</div>
+                      <div key={entry.key} className="flex w-full justify-start mb-4">
+                        <div className="flex items-start gap-3 max-w-[85%]">
+                          <div
+                            className="mt-0.5 flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md text-xs font-semibold"
+                            style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
+                          >
+                            O
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 mt-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>Orchestrator</span>
+                              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                                {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+
+                            <div
+                              onClick={() => openArtifacts('tasks')}
+                              className="group cursor-pointer flex items-center justify-between gap-6 px-4 py-3 rounded-xl transition-all hover:bg-gray-50"
+                              style={{
+                                backgroundColor: 'var(--panel-bg)',
+                                border: '0.5px solid var(--app-border)',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
+                              }}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100">
+                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                                    <path d="M9 3v18" />
+                                    <path d="M14 9h4" />
+                                    <path d="M14 15h4" />
+                                  </svg>
+                                </div>
+                                <div>
+                                  <div className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>协作任务计划已生成</div>
+                                  <div className="text-xs mt-0.5" style={{ color: 'var(--app-text-secondary)' }}>
+                                    包含 {entry.plan.items.length} 个执行阶段 · 点击查看详情
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="m9 18 6-6-6-6" />
+                                </svg>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -823,7 +862,7 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
         {!isUser && (
           <div className="mb-2 flex items-center gap-3 px-1">
             <div
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+              className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-xs font-semibold"
               style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
             >
               {avatarLabel}

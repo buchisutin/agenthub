@@ -2,15 +2,6 @@ import type { OrchestratorPlanningState, PlanCardModel } from '../../types';
 import { Badge } from '../ui/Badge';
 import { getStatusLabel, getStatusVariant, getTaskDotColor } from '../ui/status';
 
-function scrollToRun(runId: string) {
-  const node = document.getElementById(`run-card-${runId}`);
-  node?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function hasRunId(runId: string | null): runId is string {
-  return Boolean(runId);
-}
-
 function formatTaskType(taskType?: string) {
   if (!taskType) return null;
   return taskType.charAt(0).toUpperCase() + taskType.slice(1);
@@ -25,14 +16,8 @@ function formatDependencies(dependsOn?: string[]) {
 
 export function PlanCard({
   plan,
-  onOpenTask,
-  onResumeFrom,
-  onFocusArtifacts,
 }: {
   plan: PlanCardModel;
-  onOpenTask?: (taskId: string) => void;
-  onResumeFrom?: (planId: string, plannerTaskId: string) => void;
-  onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview') => void;
 }) {
   const completed = plan.items.filter((i) => i.status === 'completed').length;
   const total = plan.items.length;
@@ -54,9 +39,6 @@ export function PlanCard({
           <span className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
             {completed} / {total} completed
           </span>
-        </div>
-        <div className="text-[13px] line-clamp-2" style={{ color: 'var(--app-text-secondary)' }}>
-          {plan.summary}
         </div>
         <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--card-strong)' }}>
           <div
@@ -83,7 +65,6 @@ export function PlanCard({
               )}
               <div className="overflow-hidden rounded-lg" style={{ border: '0.5px solid var(--app-border)', backgroundColor: '#FFFFFF' }}>
                 {level.map((item) => {
-          const runId = hasRunId(item.runId) ? item.runId : null;
           const plannerTaskId = item.plannerTaskId ?? `t${item.index}`;
           return (
             <div
@@ -112,62 +93,10 @@ export function PlanCard({
                   <span>·</span>
                   <span>{formatDependencies(item.dependsOn)}</span>
                 </div>
-                {item.description ? (
-                  <div className="mt-2 text-xs line-clamp-2" style={{ color: 'var(--app-text-secondary)' }}>
-                    {item.description}
-                  </div>
-                ) : null}
-                {item.outputSummary ? (
-                  <div className="mt-2 rounded-md px-2 py-1.5 text-xs line-clamp-2" style={{ backgroundColor: 'var(--card-bg)', color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}>
-                    产物：{item.outputSummary}
-                  </div>
-                ) : null}
               </div>
 
               <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
-                {onOpenTask && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenTask(item.taskId)}
-                    className="text-xs hover:underline"
-                    style={{ color: 'var(--app-text-secondary)' }}
-                  >
-                    View Task
-                  </button>
-                )}
-                {onFocusArtifacts && runId ? (
-                  <button
-                    type="button"
-                    onClick={() => onFocusArtifacts(runId, 'diff')}
-                    className="text-xs hover:underline"
-                    style={{ color: 'var(--app-text-secondary)' }}
-                  >
-                    查看产物
-                  </button>
-                ) : null}
                 <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
-                {onResumeFrom && item.status !== 'running' && item.status !== 'queued' ? (
-                  <button
-                    type="button"
-                    onClick={() => onResumeFrom(plan.id, plannerTaskId)}
-                    aria-label={`从 ${plannerTaskId} 重新执行`}
-                    className="text-xs hover:underline"
-                    style={{ color: 'var(--app-text-secondary)' }}
-                  >
-                    从此任务重新执行
-                  </button>
-                ) : null}
-                {runId ? (
-                  <button
-                    type="button"
-                    onClick={() => scrollToRun(runId)}
-                    aria-label="View Run"
-                    className="text-xs hover:underline"
-                    style={{ color: 'var(--status-running)' }}
-                  >
-                    Run ↗
-                  </button>
-                ) : null}
               </div>
             </div>
           );

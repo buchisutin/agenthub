@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../../services/api';
 import { applyRunDetail } from '../../store/timeline';
 import { useApp } from '../../store/useApp';
-import { ConfirmationCard } from '../ConfirmationCard';
 import { Badge } from '../ui/Badge';
 import { getStatusLabel, getStatusVariant } from '../ui/status';
 import { normalizeMarkdownTables } from '../../utils/markdown';
 import { formatRelativePath } from '../../utils/pathDisplay';
 import type {
-  ApplyCheckResult,
-  ApprovalRequest as ApprovalRequestType,
   ChatTimelineItem,
   FileChange,
   RunChangeApplication,
@@ -20,10 +17,20 @@ import type {
   ToolCallBlock,
 } from '../../types';
 
-type ApplyChangesError = Error & {
-  statusCode?: number;
-  check?: ApplyCheckResult;
-};
+function looksLikeMachineId(value: string) {
+  const trimmed = value.trim();
+  const hyphenCount = (trimmed.match(/-/g) ?? []).length;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+    || (hyphenCount >= 2 && /^[a-z0-9-]{16,}$/i.test(trimmed))
+    || (trimmed.length > 20 && /^[a-z0-9-]+$/i.test(trimmed));
+}
+
+function getSafeAgentTitle(agentName: string | null | undefined, agentId: string | null | undefined) {
+  const candidate = agentName?.trim() || agentId?.trim() || '';
+  const fallback = /orchestrator/i.test(`${agentName ?? ''} ${agentId ?? ''}`) ? 'Orchestrator' : 'Agent';
+  if (!candidate || looksLikeMachineId(candidate)) return fallback;
+  return candidate;
+}
 
 export function RunCard({
   item,
@@ -45,13 +52,6 @@ export function RunCard({
   const [runWorkspace, setRunWorkspace] = useState<RunWorkspace | null>(null);
   const [changeApp, setChangeApp] = useState<RunChangeApplication | null>(null);
   const [fileChanges, setFileChanges] = useState<FileChange[]>([]);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [applyCheck, setApplyCheck] = useState<ApplyCheckResult | null>(null);
-  const [checkingApply, setCheckingApply] = useState(false);
-  const [changeConfirmation, setChangeConfirmation] = useState<ApprovalRequestType | null>(null);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [confirmationError, setConfirmationError] = useState<string | null>(null);
   const [mergeMode, setMergeMode] = useState<'auto' | 'manual'>('manual');
   const [mergeStatus, setMergeStatus] = useState<'pending' | 'auto_merged' | 'conflict_resolved' | 'needs_approval' | 'failed' | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(item.status === 'failed' || item.status === 'interrupted' || Boolean(item.error));
@@ -92,20 +92,16 @@ export function RunCard({
       setMergeMode(summary.mergeMode ?? 'manual');
       setMergeStatus(summary.mergeStatus ?? null);
     }).catch(() => {});
-    api.getConversationApprovals(item.conversationId).then((approvals) => {
-      if (cancelled) return;
-      const runApprovals = approvals.filter(
-        (a) => a.runId === item.runId && (a.actionType === 'apply_changes' || a.actionType === 'apply_and_commit'),
-      );
-      const latest = runApprovals.at(-1) ?? null;
-      if (latest) setChangeConfirmation(latest);
-    }).catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [item.conversationId, item.runId, item.status, shouldLoadRunMeta]);
 
   useEffect(() => {
+    if (running) {
+      setDetailsExpanded(true);
+      return;
+    }
     if (item.status === 'failed' || item.status === 'interrupted' || item.error) {
       setDetailsExpanded(true);
       return;
@@ -116,20 +112,17 @@ export function RunCard({
   const toolBlocks = item.blocks.filter((block): block is ToolCallBlock => block.kind === 'tool_call');
   const eventCount = item.eventCount ?? 0;
   const canLoadDetail = !item.detailsLoaded && eventCount > 0;
-  const hasFailedTool = toolBlocks.some((block) => block.status === 'error');
   const isCleaned = runWorkspace?.status === 'cleaned';
   const isApplied = changeApp?.status === 'applied';
   const canShowActions = item.status === 'completed';
-  const conflictFiles = (applyCheck?.files ?? []).filter((file) => file.status === 'conflict');
   const hasFileChanges = fileChanges.length > 0;
   const isAutoMergeRun = mergeMode === 'auto';
-  const hasActionBar = canShowActions && hasFileChanges && !isApplied && !isCleaned && !isAutoMergeRun;
   const showNoChangesState = canShowActions && !hasFileChanges && !isApplied && !isCleaned && !isAutoMergeRun;
-  const hasPendingProjectChanges = hasActionBar && conflictFiles.length === 0;
+  const hasPendingProjectChanges = canShowActions && hasFileChanges && !isApplied && !isCleaned && !isAutoMergeRun;
   const showAutoMergeState = canShowActions && isAutoMergeRun && !isCleaned;
   const appliedFilesCount = changeApp?.appliedFiles.length ?? fileChanges.length;
   const canCollapse = item.status === 'completed' || running;
-  const showCollapsedSummary = canCollapse && !detailsExpanded;
+  const showCollapsedSummary = canCollapse && !detailsExpanded && !running;
 
   async function handleLoadDetail() {
     if (loadingDetail || item.detailsLoaded) return;
@@ -159,108 +152,47 @@ export function RunCard({
     void handleLoadDetail();
   }, [canLoadDetail, detailError, detailsExpanded, item.runId]);
 
-  async function requestChangeApproval(requestApproval: () => Promise<ApprovalRequestType>) {
-    if (checkingApply || isApplied) return;
-    if (changeConfirmation && changeConfirmation.status !== 'rejected') return;
-    setCheckingApply(true);
-    setApplyError(null);
-    setApplyCheck(null);
-    try {
-      const check = await api.checkRunApply(item.runId);
-      setApplyCheck(check);
-      if (!check.canApply) {
-        setCheckingApply(false);
-        return;
-      }
-      setCheckingApply(false);
-      try {
-        const confirmation = await requestApproval();
-        setChangeConfirmation(confirmation);
-        setApplyCheck(null);
-      } catch (e: unknown) {
-        const applyErr = e as ApplyChangesError;
-        if (applyErr.statusCode === 409 && applyErr.check) {
-          setApplyCheck(applyErr.check);
-          setApplyError('Apply disabled due to conflicts');
-          return;
-        }
-        setApplyError(e instanceof Error ? e.message : 'Apply failed');
-      }
-    } catch (e: unknown) {
-      setApplyError(e instanceof Error ? e.message : 'Check failed');
-      setCheckingApply(false);
-    }
-  }
-
-  async function handleApplyChanges() {
-    await requestChangeApproval(() => api.requestApplyChanges(item.runId));
-  }
-
-  async function handleApplyAndCommit() {
-    await requestChangeApproval(() => api.requestApplyAndCommit(item.runId));
-  }
-
-  async function handleConfirm(approvalId: string) {
-    setConfirmingId(approvalId);
-    setConfirmationError(null);
-    try {
-      const updated = await api.approveApproval(approvalId);
-      if (updated.actionType === 'apply_changes' || updated.actionType === 'apply_and_commit') {
-        setChangeConfirmation(updated);
-        if (updated.status === 'executed') {
-          const app = await api.getRunChangeApplication(item.runId);
-          setChangeApp(app);
-        }
-      }
-    } catch (e: unknown) {
-      setConfirmationError(e instanceof Error ? e.message : 'Confirmation failed');
-    } finally {
-      setConfirmingId(null);
-    }
-  }
-
-  async function handleCancel(approvalId: string) {
-    setCancellingId(approvalId);
-    setConfirmationError(null);
-    try {
-      const updated = await api.rejectApproval(approvalId);
-      if (updated.actionType === 'apply_changes' || updated.actionType === 'apply_and_commit') {
-        setChangeConfirmation(updated);
-      }
-    } catch (e: unknown) {
-      setConfirmationError(e instanceof Error ? e.message : 'Cancel failed');
-    } finally {
-      setCancellingId(null);
-    }
-  }
-
   const visibleBlocks = item.blocks.filter((block) => block.kind !== 'tool_call' && block.kind !== 'file_change_indicator');
+  const agentTextBlocks = visibleBlocks.filter((block) => block.kind === 'agent_text');
+  const auxiliaryBlocks = visibleBlocks.filter((block) => block.kind !== 'agent_text');
+  const showAppliedState = Boolean(isApplied && changeApp);
+  const showSkippedState = changeApp?.status === 'skipped';
+  const showRightPanelGuide = canShowActions && !isCleaned && onFocusArtifacts;
+  const showFooter =
+    isCleaned
+    || hasPendingProjectChanges
+    || showAutoMergeState
+    || showNoChangesState
+    || showAppliedState
+    || showSkippedState
+    || showRightPanelGuide;
 
   return (
-    <div ref={cardRef} id={`run-card-${item.runId}`} className="agenthub-card space-y-3 p-4">
+    <div
+      ref={cardRef}
+      id={`run-card-${item.runId}`}
+      className="mr-auto max-w-[85%] space-y-3 rounded-xl p-4"
+      style={{
+        backgroundColor: '#FFFFFF',
+        border: '0.5px solid #E5E7EB',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+      }}
+    >
       <RunHeader
         item={item}
         isActive={isActive}
         onInterrupt={onInterrupt}
-        fileCount={appliedFilesCount}
         detailsExpanded={detailsExpanded}
         canCollapse={canCollapse}
         onToggleDetails={() => setDetailsExpanded((current) => !current)}
       />
 
-      {showCollapsedSummary ? (
-        <RunCollapsedSummary
-          item={item}
-          fileCount={appliedFilesCount}
-        />
-      ) : (
+      {showCollapsedSummary ? null : (
         <>
 
           <div className="space-y-3">
-            {running ? (
-              <RunningSummary toolCount={toolBlocks.length} />
-            ) : toolBlocks.length > 0 ? (
-              <RunTimeline blocks={toolBlocks} autoExpand={hasFailedTool} workspaceRootPath={runWorkspace?.rootPath ?? null} onFocusArtifacts={onFocusArtifacts ? () => onFocusArtifacts(item.runId, 'diff') : undefined} />
+            {toolBlocks.length > 0 ? (
+              <RunTimeline blocks={toolBlocks} workspaceRootPath={runWorkspace?.rootPath ?? null} onFocusArtifacts={onFocusArtifacts ? () => onFocusArtifacts(item.runId, 'diff') : undefined} />
             ) : canLoadDetail && loadingDetail ? (
               <div
                 className="rounded-lg px-3 py-2 text-sm"
@@ -278,84 +210,76 @@ export function RunCard({
                 重新加载执行记录
               </button>
             ) : null}
-            {visibleBlocks
-              .map((block) => (
-                <TimelineBlockView key={block.id} block={block} workspaceRootPath={runWorkspace?.rootPath ?? null} />
-              ))}
+            <AgentTextPanel blocks={agentTextBlocks} status={item.status} />
+            {auxiliaryBlocks.map((block) => (
+              <TimelineBlockView key={block.id} block={block} />
+            ))}
           </div>
 
-          {hasActionBar && (
-            <RunActionBar
-              onFocusArtifacts={onFocusArtifacts ? () => onFocusArtifacts(item.runId, 'diff') : undefined}
-              onApplyChanges={() => void handleApplyChanges()}
-              onApplyAndCommit={() => void handleApplyAndCommit()}
-              hasFileChanges={hasFileChanges}
-              isApplied={Boolean(isApplied)}
-              isCleaned={Boolean(isCleaned)}
-              checkingApply={checkingApply}
-              applyDisabled={conflictFiles.length > 0 || Boolean(isApplied)}
-            />
-          )}
-
-          {isCleaned && (
-            <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}>
-              临时工作区已清理，Diff 和 Preview 已收起
-            </div>
-          )}
-          {hasPendingProjectChanges && (
-            <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: '#92400E', border: '0.5px solid #FDE68A' }}>
-              这些改动还停留在隔离工作区里。应用到项目后，后续 Run 才会基于这次结果继续协作。
-            </div>
-          )}
-          {showAutoMergeState && (
-            <AutoMergeState
-              mergeStatus={mergeStatus}
-              appliedFilesCount={appliedFilesCount}
-            />
-          )}
-          {showNoChangesState && (
-            <div className="flex items-center gap-2">
-              <Badge variant="muted">无文件改动</Badge>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                这次 Run 没有产出可应用到项目目录的文件变化。
-              </span>
-            </div>
-          )}
-          {isApplied && changeApp && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="applied">已应用</Badge>
-              <span className="hidden">Applied</span>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                改动已经同步到项目目录。
-              </span>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {changeApp.appliedFiles.length} files
-              </span>
-              {changeApp.skippedFiles.length > 0 && (
-                <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                  {changeApp.skippedFiles.length} skipped
-                </span>
+          {showFooter && (
+            <RunFooter>
+              {isCleaned && (
+                <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}>
+                  临时工作区已清理，Diff 和 Preview 已收起
+                </div>
               )}
-            </div>
+              {hasPendingProjectChanges && (
+                <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: '#92400E', border: '0.5px solid #FDE68A' }}>
+                  这些改动还停留在隔离工作区里。应用到项目后，后续 Run 才会基于这次结果继续协作。
+                </div>
+              )}
+              {showAutoMergeState && (
+                <AutoMergeState
+                  mergeStatus={mergeStatus}
+                  appliedFilesCount={appliedFilesCount}
+                />
+              )}
+              {showNoChangesState && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="muted">无文件改动</Badge>
+                  <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                    这次 Run 没有产出可应用到项目目录的文件变化。
+                  </span>
+                </div>
+              )}
+              {showAppliedState && changeApp && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="applied">已应用</Badge>
+                  <span className="hidden">Applied</span>
+                  <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                    改动已经同步到项目目录。
+                  </span>
+                  <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                    {changeApp.appliedFiles.length} files
+                  </span>
+                  {changeApp.skippedFiles.length > 0 && (
+                    <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                      {changeApp.skippedFiles.length} skipped
+                    </span>
+                  )}
+                </div>
+              )}
+              {showSkippedState && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="muted">无可应用改动</Badge>
+                  <span className="hidden">No changes</span>
+                </div>
+              )}
+              {showRightPanelGuide && (
+                <div className="text-sm" style={{ color: '#6B7280' }}>
+                  代码已生成。{' '}
+                  <button
+                    type="button"
+                    onClick={() => onFocusArtifacts(item.runId, 'diff')}
+                    className="font-medium hover:underline"
+                    style={{ color: '#2563EB' }}
+                  >
+                    在右侧审查并部署
+                  </button>
+                </div>
+              )}
+            </RunFooter>
           )}
-          {changeApp?.status === 'skipped' && (
-            <div className="flex items-center gap-2">
-              <Badge variant="muted">无可应用改动</Badge>
-              <span className="hidden">No changes</span>
-            </div>
-          )}
-          {conflictFiles.length > 0 && <ConflictPanel applyCheck={applyCheck} workspaceRootPath={runWorkspace?.rootPath ?? null} />}
-          {changeConfirmation && (
-            <ConfirmationCard
-              approval={changeConfirmation}
-              onConfirm={handleConfirm}
-              onCancel={handleCancel}
-              confirmingId={confirmingId}
-              cancellingId={cancellingId}
-            />
-          )}
-          {confirmationError && <InlineError message={confirmationError} />}
-          {applyError && <InlineError message={applyError} />}
           {detailError && <InlineError message={detailError} />}
           {item.error && <InlineError message={item.error} />}
         </>
@@ -368,7 +292,6 @@ function RunHeader({
   item,
   isActive,
   onInterrupt,
-  fileCount,
   detailsExpanded,
   canCollapse,
   onToggleDetails,
@@ -376,37 +299,36 @@ function RunHeader({
   item: ChatTimelineItem;
   isActive: boolean;
   onInterrupt: () => void;
-  fileCount: number;
   detailsExpanded: boolean;
   canCollapse: boolean;
   onToggleDetails: () => void;
 }) {
-  const duration = useMemo(() => {
-    const end = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
-    const start = new Date(item.startedAt).getTime();
-    const seconds = Math.max(1, Math.round((end - start) / 1000));
-    return `${seconds}s`;
-  }, [item.finishedAt, item.startedAt]);
+  const timestamp = useMemo(() => {
+    return new Date(item.startedAt).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }, [item.startedAt]);
+  const agentTitle = getSafeAgentTitle(item.agentName, item.agentId);
 
   return (
     <div className="flex items-center gap-3">
       <div
-        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+        className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-xs font-semibold"
         style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
       >
-        {(item.agentName ?? 'A').slice(0, 1).toUpperCase()}
+        {agentTitle.slice(0, 1).toUpperCase()}
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>
-              {item.agentName ?? item.agentId}
+              {agentTitle}
+            </span>
+            <span className="text-xs" style={{ color: '#9CA3AF' }}>
+              {timestamp}
             </span>
             <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
-          </div>
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-            {fileCount > 0 && <span>{fileCount} files</span>}
-            <span>{duration}</span>
           </div>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
@@ -425,7 +347,7 @@ function RunHeader({
               type="button"
               onClick={onInterrupt}
               className="rounded-lg px-3 py-1.5 text-xs font-medium"
-              style={{ backgroundColor: '#FEF2F2', color: '#991B1B', border: '0.5px solid #FECACA' }}
+              style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--status-danger)', border: '0.5px solid var(--app-border)' }}
             >
               中断
             </button>
@@ -438,12 +360,10 @@ function RunHeader({
 
 function RunTimeline({
   blocks,
-  autoExpand,
   workspaceRootPath,
   onFocusArtifacts,
 }: {
   blocks: ToolCallBlock[];
-  autoExpand: boolean;
   workspaceRootPath: string | null;
   onFocusArtifacts?: () => void;
 }) {
@@ -457,17 +377,14 @@ function RunTimeline({
   const hiddenCompletedCount = completedBlocks.length - visibleCompleted.length;
 
   return (
-    <div className="space-y-3">
-      {hiddenCompletedCount > 0 && (
-        <div
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono"
-          style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)', border: '1px dashed var(--app-border)' }}
-        >
-          📦 {hiddenCompletedCount} 历史动作
+    <div className="mb-4 space-y-2">
+      {(visibleCompleted.length > 0 || errorBlocks.length > 0 || hiddenCompletedCount > 0) && (
+        <div className="mb-2 text-[11px] font-medium uppercase tracking-wider" style={{ color: '#9CA3AF' }}>
+          EXECUTED TOOLS
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {visibleCompleted.map((block) => (
           <ToolChip key={block.id} block={block} workspaceRootPath={workspaceRootPath} />
         ))}
@@ -477,11 +394,13 @@ function RunTimeline({
       </div>
 
       {runningBlocks.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 rounded-md overflow-hidden" style={{ backgroundColor: '#1E1E1E' }}>
-          <div className="h-3 w-3 rounded-full border-2 border-t-[#3B82F6] animate-spin flex-shrink-0" style={{ borderColor: '#4B5563' }} />
-          <div className="font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis flex-1 relative pr-3" style={{ color: '#A3BE8C' }}>
+        <div
+          className="flex h-8 items-center gap-2 overflow-hidden rounded-md px-3 font-mono text-xs"
+          style={{ backgroundColor: '#111827', color: '#A3BE8C' }}
+        >
+          <div className="relative flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-3">
             &gt; {runningBlocks[0].toolName} {formatRelativePath(runningBlocks[0].inputPreview || '', workspaceRootPath)}
-            <span className="animate-pulse ml-1 inline-block" style={{ color: '#E5E9F0' }}>▋</span>
+            <span className="typing-cursor ml-1 inline-block">▉</span>
           </div>
         </div>
       )}
@@ -491,19 +410,20 @@ function RunTimeline({
 
 function ToolChip({ block, workspaceRootPath, isError = false, onClick }: { block: ToolCallBlock; workspaceRootPath: string | null; isError?: boolean; onClick?: () => void }) {
   const preview = formatRelativePath(block.inputPreview || block.toolName, workspaceRootPath);
+  const dotColor = isError ? '#EF4444' : '#10B981';
 
   return (
     <div
       onClick={isError ? onClick : undefined}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono transition-transform hover:-translate-y-[1px] ${isError ? 'cursor-pointer' : 'cursor-default'}`}
-      style={isError ? {
-        backgroundColor: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA', boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.1)'
-      } : {
-        backgroundColor: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0'
+      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-xs ${isError ? 'cursor-pointer' : 'cursor-default'}`}
+      style={{
+        backgroundColor: 'var(--card-subtle)',
+        color: '#4B5563',
+        border: '0.5px solid var(--app-border)',
       }}
     >
-      <span>{isError ? '✗' : '✓'}</span>
-      <span className="font-semibold">{block.toolName}</span>
+      <span className="h-1 w-1 flex-shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
+      <span className="font-medium">{block.toolName}</span>
       <span className="opacity-70 max-w-[120px] truncate">{preview}</span>
     </div>
   );
@@ -559,187 +479,118 @@ function AutoMergeState({
   );
 }
 
-function RunningSummary({ toolCount }: { toolCount: number }) {
+function RunFooter({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-lg px-3 py-3" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)' }}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>
-            正在工作...
-          </div>
-          <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-            {toolCount > 0 ? `已记录 ${toolCount} 条工具调用，点击展开查看详情` : '等待更多执行事件'}
-          </div>
-        </div>
-        <div className="flex gap-1 px-1">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-2 w-2 rounded-full animate-bounce"
-              style={{ backgroundColor: 'var(--color-accent)', animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
-        </div>
-      </div>
+    <div
+      className="run-card-footer mt-5 space-y-3 pt-4"
+      style={{ borderTop: '0.5px solid var(--app-border)' }}
+    >
+      {children}
     </div>
   );
 }
 
-function RunCollapsedSummary({
-  item,
-  fileCount,
-}: {
-  item: ChatTimelineItem;
-  fileCount: number;
-}) {
-  const isCompleted = item.status === 'completed';
+function AgentTextPanel({ blocks, status }: { blocks: TimelineBlock[]; status: ChatTimelineItem['status'] }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [collapsible, setCollapsible] = useState(false);
+  const running = status === 'queued' || status === 'running';
+  const collapsed = !running && collapsible && !expanded;
+
+  const markdown = blocks
+    .filter((block): block is Extract<TimelineBlock, { kind: 'agent_text' }> => block.kind === 'agent_text')
+    .map((block) => block.content)
+    .join('\n\n');
+
+  useEffect(() => {
+    if (running) {
+      setExpanded(true);
+      setAutoScroll(true);
+      return;
+    }
+    setExpanded(false);
+  }, [running]);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    setCollapsible(contentRef.current.scrollHeight > 160);
+  }, [markdown, running]);
+
+  useEffect(() => {
+    if (!running || !autoScroll || !panelRef.current) return;
+    panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [autoScroll, markdown, running]);
+
+  if (blocks.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)', color: 'var(--app-text)' }}>
-      <Badge variant={isCompleted ? 'completed' : 'running'}>
-        {isCompleted ? '已完成' : '运行中'}
-      </Badge>
-      {isCompleted && (
-        <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-          {fileCount} files
-        </span>
+    <div
+      ref={panelRef}
+      className="agent-output-panel relative mt-3 rounded-lg"
+      style={{ backgroundColor: '#F9FAFB' }}
+      onWheel={() => setAutoScroll(false)}
+      onTouchMove={() => setAutoScroll(false)}
+    >
+      <div
+        ref={contentRef}
+        className="overflow-hidden p-4"
+        style={{ maxHeight: collapsed ? 160 : undefined }}
+      >
+        <div className="markdown-body max-w-none text-sm leading-[1.6]" style={{ color: '#374151' }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdownTables(stabilizeStreamingMarkdown(markdown))}</ReactMarkdown>
+          {running && <span className="typing-cursor ml-1 inline-block">▉</span>}
+        </div>
+      </div>
+      {collapsed && (
+        <div
+          className="absolute inset-x-0 bottom-0 flex justify-center pb-3 pt-12"
+          style={{ background: 'linear-gradient(to bottom, rgba(249,250,251,0), #F9FAFB 62%)' }}
+        >
+          <button
+            type="button"
+            className="rounded-md px-3 py-1.5 text-xs font-medium"
+            style={{ backgroundColor: '#FFFFFF', color: 'var(--app-text)', border: '0.5px solid var(--app-border)' }}
+            onClick={() => setExpanded(true)}
+          >
+            展开执行细节 ↓
+          </button>
+        </div>
       )}
-      <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-        展开查看执行详情
-      </span>
-    </div>
-  );
-}
-
-function ToolTimelineRow({ block, expanded: _expanded, workspaceRootPath }: { block: ToolCallBlock; expanded: boolean; workspaceRootPath: string | null }) {
-  const pill = formatRelativePath(block.inputPreview || block.toolName, workspaceRootPath);
-  const detailText = formatToolOutput(block.resultContent ?? block.partialJson, workspaceRootPath);
-  const summaryText = getToolSummary(block.summary, detailText);
-
-  return (
-    <div
-      className="rounded-md px-2 py-2"
-      style={{ backgroundColor: block.status === 'error' ? 'rgba(220, 38, 38, 0.035)' : 'transparent' }}
-    >
-      <div className="flex w-full items-start justify-between gap-3 text-left">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: block.status === 'error' ? 'var(--status-danger)' : block.status === 'running' ? 'var(--status-running)' : 'var(--status-success)' }}>
-          </span>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium" style={{ color: 'var(--app-text)' }}>
-                {block.toolName}
-              </span>
-              <code
-                className="rounded px-1.5 py-0.5 text-[11px]"
-                style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}
-              >
-                {pill}
-              </code>
-            </div>
-            {summaryText && (
-              <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {summaryText}
-              </div>
-            )}
-          </div>
+      {!running && collapsible && expanded && (
+        <div className="flex justify-center px-4 pb-3">
+          <button
+            type="button"
+            className="text-xs font-medium"
+            style={{ color: 'var(--app-text-secondary)' }}
+            onClick={() => setExpanded(false)}
+          >
+            ↑ 收起
+          </button>
         </div>
-        <span className="text-[11px]" style={{ color: 'var(--app-text-secondary)' }}>
-          {block.status === 'error' ? '失败' : block.status === 'running' ? '执行中' : '完成'}
-        </span>
-      </div>
+      )}
     </div>
   );
 }
 
-function RunActionBar({
-  onFocusArtifacts,
-  onApplyChanges,
-  onApplyAndCommit,
-  hasFileChanges,
-  isApplied,
-  isCleaned,
-  checkingApply,
-  applyDisabled,
-}: {
-  onFocusArtifacts?: () => void;
-  onApplyChanges: () => void;
-  onApplyAndCommit: () => void;
-  hasFileChanges: boolean;
-  isApplied: boolean;
-  isCleaned: boolean;
-  checkingApply: boolean;
-  applyDisabled: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-3 flex-wrap">
-      <div className="flex items-center gap-2 flex-wrap">
-        {hasFileChanges && !isCleaned && onFocusArtifacts && (
-          <button type="button" aria-label="查看产物" onClick={onFocusArtifacts} className="rounded-lg px-3 py-2 text-sm font-medium" style={secondaryButton(false)}>
-            查看产物
-          </button>
-        )}
-        {hasFileChanges && !isCleaned && !isApplied && (
-          <button type="button" aria-label="Apply Changes" onClick={onApplyChanges} disabled={applyDisabled || checkingApply} className="rounded-lg px-3 py-2 text-sm font-medium" style={primaryButton(applyDisabled || checkingApply)}>
-            {checkingApply ? '检查中...' : '应用到项目'}
-          </button>
-        )}
-        {hasFileChanges && !isCleaned && !isApplied && (
-          <button type="button" aria-label="Apply and Commit" onClick={onApplyAndCommit} disabled={applyDisabled || checkingApply} className="rounded-lg px-3 py-2 text-sm font-medium" style={secondaryAccentButton(applyDisabled || checkingApply)}>
-            {checkingApply ? '检查中...' : '应用并提交'}
-          </button>
-        )}
-      </div>
-    </div>
-  );
+function stabilizeStreamingMarkdown(markdown: string) {
+  let safe = markdown;
+  const fenceCount = (safe.match(/```/g) ?? []).length;
+  if (fenceCount % 2 === 1) safe += '\n```';
+
+  const boldCount = (safe.match(/\*\*/g) ?? []).length;
+  if (boldCount % 2 === 1) safe += '**';
+
+  const italicCount = (safe.match(/(^|[^*])\*([^*\s]|$)/g) ?? []).length;
+  if (italicCount % 2 === 1) safe += '*';
+
+  return safe;
 }
 
-function ConflictPanel({ applyCheck, workspaceRootPath }: { applyCheck: ApplyCheckResult | null; workspaceRootPath: string | null }) {
-  if (!applyCheck || applyCheck.canApply) return null;
-  const conflicts = applyCheck.files.filter((file) => file.status === 'conflict');
-  const skipped = applyCheck.files.filter((file) => file.status === 'skipped');
-  return (
-    <div
-      className="rounded-lg px-4 py-3"
-      style={{ backgroundColor: '#FEF2F2', border: '0.5px solid #FECACA', borderLeft: '4px solid var(--status-danger)' }}
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <Badge variant="conflict">冲突</Badge>
-        <span className="text-sm font-medium" style={{ color: '#991B1B' }}>
-          应用前需要先解决冲突
-        </span>
-      </div>
-      <span className="hidden">Apply disabled due to conflicts</span>
-      <div className="mb-2 flex gap-3 text-xs" style={{ color: '#7F1D1D' }}>
-        <span>{applyCheck.summary.safe} safe</span>
-        <span>{applyCheck.summary.conflict} conflict</span>
-        <span>{applyCheck.summary.skipped} skipped</span>
-      </div>
-      <div className="space-y-1 text-xs" style={{ color: '#7F1D1D' }}>
-        {conflicts.map((file) => (
-          <div key={file.filePath}>
-            {formatRelativePath(file.filePath, workspaceRootPath)} · {file.reason}
-          </div>
-        ))}
-        {skipped.map((file) => (
-          <div key={file.filePath}>
-            {formatRelativePath(file.filePath, workspaceRootPath)} · {file.reason}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TimelineBlockView({ block, workspaceRootPath }: { block: TimelineBlock; workspaceRootPath: string | null }) {
+function TimelineBlockView({ block }: { block: TimelineBlock }) {
   if (block.kind === 'agent_text') {
-    return (
-      <div className="rounded-md border-l-2 px-3 py-2" style={{ borderColor: 'var(--app-border)', backgroundColor: 'transparent' }}>
-        <div className="markdown-body text-sm leading-6">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdownTables(block.content)}</ReactMarkdown>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   if (block.kind === 'approval_request') {
@@ -764,7 +615,7 @@ function TimelineBlockView({ block, workspaceRootPath }: { block: TimelineBlock;
 
 function InlineError({ message }: { message: string }) {
   return (
-    <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FEF2F2', border: '0.5px solid #FECACA', color: '#991B1B' }}>
+    <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)', color: 'var(--status-danger)' }}>
       {message}
     </div>
   );
@@ -776,34 +627,4 @@ function secondaryButton(disabled: boolean) {
     color: disabled ? 'var(--app-text-secondary)' : 'var(--app-text)',
     border: disabled ? '0.5px solid var(--app-border)' : '0.5px solid rgba(148, 163, 184, 0.4)',
   };
-}
-
-function primaryButton(disabled: boolean) {
-  return {
-    backgroundColor: disabled ? 'var(--card-strong)' : '#2563EB',
-    color: disabled ? 'var(--app-text-secondary)' : '#FFFFFF',
-    border: `0.5px solid ${disabled ? 'var(--app-border)' : '#2563EB'}`,
-  };
-}
-
-function secondaryAccentButton(disabled: boolean) {
-  return {
-    backgroundColor: disabled ? 'var(--card-strong)' : '#DBEAFE',
-    color: disabled ? 'var(--app-text-secondary)' : '#1D4ED8',
-    border: `0.5px solid ${disabled ? 'var(--app-border)' : '#93C5FD'}`,
-  };
-}
-
-function getToolSummary(summary: string | null | undefined, detail: string) {
-  const cleanSummary = summary?.trim() ?? '';
-  const cleanDetail = detail.trim();
-  if (!cleanSummary) return cleanDetail.split('\n').find(Boolean)?.slice(0, 160) ?? '';
-  return cleanSummary;
-}
-
-function formatToolOutput(content: string, workspaceRootPath: string | null) {
-  return content.replace(/\/[^\s"']+/g, (value) => {
-    if (value.startsWith('//')) return value;
-    return formatRelativePath(value, workspaceRootPath);
-  });
 }

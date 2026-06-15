@@ -14,6 +14,8 @@ import type {
   Message,
   OrchestrateResponse,
   PreviewStartResponse,
+  DeployRecord,
+  DeployScriptsResponse,
   RerunTaskResponse,
   ResumePlanResponse,
   Run,
@@ -385,6 +387,25 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getRunDeployScripts(runId: string): Promise<DeployScriptsResponse> {
+    const res = await fetch(`${BASE_URL}/runs/${runId}/deploy/scripts`);
+    return handleResponse(res);
+  },
+
+  async startRunDeploy(runId: string, script?: string): Promise<DeployRecord> {
+    const res = await fetch(`${BASE_URL}/runs/${runId}/deploy/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script }),
+    });
+    return handleResponse(res);
+  },
+
+  async getRunDeploy(runId: string): Promise<DeployRecord | null> {
+    const res = await fetch(`${BASE_URL}/runs/${runId}/deploy`);
+    return handleResponse(res);
+  },
+
   async getRunWorkspace(runId: string): Promise<RunWorkspace> {
     const res = await fetch(`${BASE_URL}/runs/${runId}/workspace`);
     return handleResponse(res);
@@ -552,6 +573,7 @@ export const api = {
   async createConversationWithWorkspace(payload: {
     title?: string;
     rootPath: string;
+    type?: 'single' | 'group';
   }): Promise<CreateConversationWithWorkspaceResponse> {
     const res = await fetch(`${BASE_URL}/conversations/with-workspace`, {
       method: 'POST',

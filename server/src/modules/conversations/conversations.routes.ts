@@ -68,7 +68,8 @@ export function createConversationsRouter(deps: ConversationsRouterDeps): Router
 
     try {
       const title = typeof req.body?.title === "string" ? req.body.title.trim() : null;
-      const conversation = conversationsService.create({ title, type: "single" });
+      const type = req.body?.type === "single" ? "single" : "group";
+      const conversation = conversationsService.create({ title, type });
       const workspace = workspacesService.bindWorkspace(conversation.id, {
         rootPath: validation.rootPath,
       });

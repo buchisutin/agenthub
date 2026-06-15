@@ -26,6 +26,69 @@ vi.mock('../../services/api', async (importOriginal) => {
         url: 'http://127.0.0.1:5174',
         status: 'running',
       }),
+      getRunCardSummary: vi.fn().mockResolvedValue({
+        workspace: {
+          mode: 'git_clone',
+          rootPath: '/tmp/.agenthub/run-1',
+          branchName: 'agenthub/run-1',
+          status: 'ready',
+          errorMessage: null,
+        },
+        changeApplication: null,
+        fileChanges: [
+          {
+            filePath: 'src/App.tsx',
+            changeType: 'edit',
+            oldContent: 'before',
+            newContent: 'after',
+            confidence: 'exact',
+            source: 'tool_event',
+          },
+        ],
+        mergeMode: 'manual',
+        mergeStatus: null,
+        merge: null,
+      }),
+      getRunDeployScripts: vi.fn().mockResolvedValue({
+        runId: 'run-1',
+        scripts: ['start', 'build'],
+        defaultScript: 'start',
+      }),
+      getRunDeploy: vi.fn().mockResolvedValue(null),
+      checkRunApply: vi.fn().mockResolvedValue({
+        runId: 'run-1',
+        canApply: true,
+        files: [{ filePath: 'src/App.tsx', changeType: 'edit', status: 'safe' }],
+        summary: { safe: 1, conflict: 0, skipped: 0 },
+      }),
+      requestApplyChanges: vi.fn().mockResolvedValue({
+        id: 'approval-1',
+        conversationId: 'conv-1',
+        runId: 'run-1',
+        taskId: null,
+        assignmentId: null,
+        actionType: 'apply_changes',
+        status: 'pending',
+        title: 'Apply Changes',
+        description: null,
+        payload: { runId: 'run-1' },
+        result: null,
+        errorMessage: null,
+        createdAt: '2026-06-13T00:00:00.000Z',
+        decidedAt: null,
+        executedAt: null,
+      }),
+      startRunDeploy: vi.fn().mockResolvedValue({
+        runId: 'run-1',
+        status: 'running',
+        script: 'start',
+        command: 'npm run start',
+        logs: [],
+        exitCode: null,
+        startedAt: '2026-06-13T00:00:00.000Z',
+        finishedAt: null,
+        errorMessage: null,
+      }),
     },
   };
 });
@@ -106,11 +169,8 @@ describe('ArtifactPanel', () => {
     expect(screen.getByRole('button', { name: '执行计划' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Summary' })).toBeNull();
     expect(screen.getByText('执行计划')).toBeTruthy();
-    expect(screen.getByText('任务')).toBeTruthy();
-    expect(screen.getByText('负责 Agent')).toBeTruthy();
-    expect(screen.getByText('状态')).toBeTruthy();
     expect(screen.getByText('Frontend UI')).toBeTruthy();
-    expect(screen.getByText('@frontend-agent')).toBeTruthy();
+    expect(screen.getByText('frontend-agent')).toBeTruthy();
   });
 
   it('loads code changes when the code changes tab is active', async () => {
@@ -160,6 +220,72 @@ describe('ArtifactPanel', () => {
     });
   });
 
+  it('renders a sticky action footer and requests apply from the panel', async () => {
+    render(
+      <ArtifactPanel
+        open
+        activeTab="diff"
+        selectedRunId="run-1"
+        plans={[plan]}
+        timeline={[run]}
+        agents={[agent]}
+        onClose={() => {}}
+        onTabChange={() => {}}
+        onOpenTask={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('1 files modified')).toBeTruthy();
+      expect(screen.getByText('npm run start ready')).toBeTruthy();
+    });
+
+    const footer = screen.getByText('1 files modified').closest('div')?.parentElement?.parentElement;
+    expect(footer?.getAttribute('class')).toContain('bg-white/95');
+    expect(screen.getByRole('button', { name: 'Apply Changes' }).getAttribute('class')).toContain('bg-[#2563EB]');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
+
+    await waitFor(() => {
+      expect(api.checkRunApply).toHaveBeenCalledWith('run-1');
+      expect(api.requestApplyChanges).toHaveBeenCalledWith('run-1');
+    });
+  });
+
+  it('renders deploy logs as a bottom console drawer above the footer', async () => {
+    vi.mocked(api.getRunDeploy).mockResolvedValueOnce({
+      runId: 'run-1',
+      status: 'running',
+      script: 'start',
+      command: 'npm run start',
+      logs: [{ stream: 'stdout', chunk: 'listening on 5173\n', at: '2026-06-13T00:00:00.000Z' }],
+      exitCode: null,
+      startedAt: '2026-06-13T00:00:00.000Z',
+      finishedAt: null,
+      errorMessage: null,
+    });
+
+    render(
+      <ArtifactPanel
+        open
+        activeTab="diff"
+        selectedRunId="run-1"
+        plans={[plan]}
+        timeline={[run]}
+        agents={[agent]}
+        onClose={() => {}}
+        onTabChange={() => {}}
+        onOpenTask={() => {}}
+      />,
+    );
+
+    const terminal = await screen.findByText('listening on 5173');
+    const pre = terminal.closest('pre');
+    expect(pre?.getAttribute('class')).toContain('rounded-t-xl');
+    expect(pre?.getAttribute('class')).toContain('bg-[#1A1A1A]');
+    expect(pre?.parentElement?.getAttribute('class')).toContain('flex-col');
+  });
+
   it('lets users drag the panel wider and reset it by double click', () => {
     render(
       <ArtifactPanel
@@ -178,6 +304,8 @@ describe('ArtifactPanel', () => {
     const resizeHandle = screen.getByLabelText('调整成果面板宽度');
 
     expect(panel.style.width).toBe('420px');
+    expect(resizeHandle.getAttribute('class')).toContain('bg-transparent');
+    expect(resizeHandle.querySelector('span')?.getAttribute('class')).toContain('w-px');
 
     fireEvent.mouseDown(resizeHandle, { clientX: 900 });
     fireEvent.mouseMove(window, { clientX: 820 });

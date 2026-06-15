@@ -123,6 +123,35 @@ describe('DiffCard', () => {
     expect(screen.queryByText('- return a;')).toBeNull();
   });
 
+  it('renders diff rows as full-width editor-style rows with separated line numbers', async () => {
+    mockedGetRunFileChanges.mockResolvedValue([
+      buildChange({
+        filePath: 'src/layout.ts',
+        oldContent: 'const value = 1;\n',
+        newContent: 'const value = 2;\n',
+      }),
+    ]);
+
+    render(<DiffCard runId="run-layout" />);
+
+    expect(await screen.findByText('src/layout.ts')).toBeTruthy();
+    const rows = document.querySelectorAll<HTMLElement>('.diff-row');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(getComputedStyle(rows[0]).display).toBe('flex');
+    expect(rows[0].style.width).toBe('100%');
+
+    const deletedRow = Array.from(rows).find((row) => row.textContent?.includes('- const value = 1;'));
+    const addedRow = Array.from(rows).find((row) => row.textContent?.includes('+ const value = 2;'));
+    expect(deletedRow?.style.backgroundColor).toBe('rgb(255, 235, 233)');
+    expect(addedRow?.style.backgroundColor).toBe('rgb(230, 255, 236)');
+
+    const lineNumber = rows[0].querySelector<HTMLElement>('.diff-line-number');
+    const codeCell = rows[0].querySelector<HTMLElement>('.diff-code-cell');
+    expect(lineNumber?.style.userSelect).toBe('none');
+    expect(lineNumber?.style.borderRight).toContain('solid');
+    expect(codeCell?.style.whiteSpace).toBe('pre');
+  });
+
   it('gates large diffs behind an explicit load action', async () => {
     mockedGetRunFileChanges.mockResolvedValue([
       buildChange({

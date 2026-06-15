@@ -47,7 +47,7 @@ vi.mock('../../services/api', async (importOriginal) => {
       }),
       updateTaskStatus: vi.fn(),
       rerunTask: vi.fn(),
-      getRunFileChanges: vi.fn(),
+      getRunFileChanges: vi.fn().mockResolvedValue([]),
       orchestrateConversation: vi.fn(),
       startRunPreview: vi.fn(),
       stopRunPreview: vi.fn(),
@@ -88,6 +88,8 @@ vi.mock('../../services/api', async (importOriginal) => {
       }),
       createConversationWithWorkspace: vi.fn(),
       checkRuntime: vi.fn().mockResolvedValue({ adapterType: 'claude_cli', available: true }),
+      getRunDeployScripts: vi.fn().mockResolvedValue({ runId: '', scripts: ['build'], defaultScript: 'build' }),
+      getRunDeploy: vi.fn().mockResolvedValue(null),
     },
   };
 });
@@ -112,6 +114,12 @@ function getTaskRowButtonByTitle(title: string) {
 
 const mockedStartRun = vi.mocked(startRun);
 const mockedGetRunFileChanges = vi.mocked(api.getRunFileChanges);
+async function openApplyPanel() {
+  const triggers = await screen.findAllByText('在右侧审查并部署');
+  fireEvent.click(triggers[0]!);
+  await screen.findByRole('button', { name: 'Apply Changes' });
+}
+
 const mockedGetRunCardSummary = vi.mocked(api.getRunCardSummary);
 const mockedOrchestrateConversation = vi.mocked(api.orchestrateConversation);
 const mockedStartRunPreview = vi.mocked(api.startRunPreview);
@@ -1010,7 +1018,8 @@ describe('ChatArea mention fan-out', () => {
     });
 
     await screen.findByText('协作任务计划已生成');
-    expect(screen.getByText('1 个执行阶段 · 点击在右侧查看详情')).toBeTruthy();
+    expect(screen.getByText('Orchestrator')).toBeTruthy();
+    expect(screen.getByText('包含 1 个执行阶段 · 点击查看详情')).toBeTruthy();
     expect(screen.getAllByText('frontend-agent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('button', { name: '查看产物' }).length).toBeGreaterThan(0);
   });
@@ -2161,9 +2170,8 @@ describe('RunCard apply changes UI', () => {
       timeline: { 'conv-1': [makeRunItem('run-1')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
   });
 
   it('does not show Apply Changes for cleaned workspace', async () => {
@@ -2190,7 +2198,7 @@ describe('RunCard apply changes UI', () => {
     expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
-  it('clicking Apply Changes calls requestApplyChanges and shows ApprovalCard', async () => {
+  it('clicking Apply Changes calls requestApplyChanges', async () => {
     vi.mocked(api.requestApplyChanges).mockResolvedValue({
       id: 'approval-1',
       conversationId: 'conv-1',
@@ -2207,100 +2215,38 @@ describe('RunCard apply changes UI', () => {
       createdAt: '2026-05-28T00:00:00.000Z',
       decidedAt: null,
       executedAt: null,
-    });
+    } as ApprovalRequest);
 
     renderChatArea({
       agents,
       timeline: { 'conv-1': [makeRunItem('run-3')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
     await waitFor(() => {
       expect(vi.mocked(api.requestApplyChanges)).toHaveBeenCalledWith('run-3');
-      expect(screen.getByText('Needs confirmation')).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Confirm' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
     });
   });
 
-  it('shows Applied badge after approve + execute', async () => {
-    vi.mocked(api.requestApplyChanges).mockResolvedValue({
-      id: 'approval-2',
-      conversationId: 'conv-1',
-      runId: 'run-4',
-      taskId: null,
-      assignmentId: null,
-      actionType: 'apply_changes',
-      status: 'pending',
-      title: 'Apply Changes',
-      description: '2 file(s) ready to apply.',
-      payload: { runId: 'run-4' },
-      result: null,
-      errorMessage: null,
-      createdAt: '2026-05-28T00:00:00.000Z',
-      decidedAt: null,
-      executedAt: null,
-    });
-    vi.mocked(api.approveApproval).mockResolvedValue({
-      id: 'approval-2',
-      conversationId: 'conv-1',
-      runId: 'run-4',
-      taskId: null,
-      assignmentId: null,
-      actionType: 'apply_changes',
-      status: 'executed',
-      title: 'Apply Changes',
-      description: '2 file(s) ready to apply.',
-      payload: { runId: 'run-4' },
-      result: { status: 'applied' },
-      errorMessage: null,
-      createdAt: '2026-05-28T00:00:00.000Z',
-      decidedAt: '2026-05-28T00:00:01.000Z',
-      executedAt: '2026-05-28T00:00:02.000Z',
-    });
-    vi.mocked(api.getRunChangeApplication).mockResolvedValue({
-        id: 'ca-2',
-        runId: 'run-4',
-        conversationId: 'conv-1',
-        runWorkspaceId: 'rws-2',
-        status: 'applied',
-        appliedFiles: ['src/index.ts', 'src/utils.ts'],
-        skippedFiles: [{ filePath: 'src/old.ts', reason: 'Delete not supported' }],
-        errorMessage: null,
-        appliedAt: '2026-05-28T00:00:00.000Z',
-        createdAt: '2026-05-28T00:00:00.000Z',
-        updatedAt: '2026-05-28T00:00:00.000Z',
-      });
-
+  it('shows Apply Changes button in the footer panel', async () => {
     renderChatArea({
       agents,
       timeline: { 'conv-1': [makeRunItem('run-4')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
-    // Approval card should appear
     await waitFor(() => {
-      expect(screen.getByText('Needs confirmation')).toBeTruthy();
+      expect(vi.mocked(api.checkRunApply)).toHaveBeenCalledWith('run-4');
+      expect(vi.mocked(api.requestApplyChanges)).toHaveBeenCalledWith('run-4');
     });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Applied')).toBeTruthy();
-      expect(screen.getAllByText(/2 files/).length).toBeGreaterThan(0);
-      expect(screen.getByText(/1 skipped/)).toBeTruthy();
-    });
-    expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
   it('does not show Apply Changes when already applied', async () => {
@@ -2367,9 +2313,8 @@ describe('RunCard apply changes UI', () => {
       timeline: { 'conv-1': [makeRunItem('run-7')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
@@ -2391,7 +2336,7 @@ describe('RunCard apply changes UI', () => {
     expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
-  it('allows multiple completed runs to have independent Apply buttons', async () => {
+  it('shows Apply Changes for a completed run after opening the artifact panel', async () => {
     const runs: ChatTimelineItem[] = [
       makeRunItem('run-a'),
       makeRunItem('run-b'),
@@ -2402,10 +2347,8 @@ describe('RunCard apply changes UI', () => {
       timeline: { 'conv-1': runs },
     });
 
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button', { name: 'Apply Changes' });
-      expect(buttons).toHaveLength(2);
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
   });
 });
 
@@ -2485,9 +2428,8 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': [makeRunItem('run-1')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
@@ -2497,7 +2439,7 @@ describe('RunCard apply conflict guard', () => {
     expect(vi.mocked(api.requestApplyChanges)).toHaveBeenCalledWith('run-1');
   });
 
-  it('does not call applyRunChanges when checkRunApply returns conflicts', async () => {
+  it('shows conflict summary when checkRunApply returns conflicts', async () => {
     vi.mocked(api.checkRunApply).mockResolvedValue({
       runId: 'run-2',
       canApply: false,
@@ -2514,20 +2456,19 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': [makeRunItem('run-2')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Apply disabled due to conflicts/)).toBeTruthy();
+      expect(screen.getByText(/1 conflicts/)).toBeTruthy();
+      expect(screen.getByText(/1 skipped/)).toBeTruthy();
     });
     expect(vi.mocked(api.checkRunApply)).toHaveBeenCalledWith('run-2');
-    expect(vi.mocked(api.applyRunChanges)).not.toHaveBeenCalled();
   });
 
-  it('shows conflict file list with reasons', async () => {
+  it('shows conflict summary with conflict/skipped counts', async () => {
     vi.mocked(api.checkRunApply).mockResolvedValue({
       runId: 'run-3',
       canApply: false,
@@ -2542,20 +2483,18 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': [makeRunItem('run-3')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Base file changed since run/)).toBeTruthy();
-      expect(screen.getByText(/0 safe/)).toBeTruthy();
-      expect(screen.getByText(/1 conflict/)).toBeTruthy();
+      expect(screen.getByText(/1 conflicts/)).toBeTruthy();
+      expect(screen.getByText(/0 skipped/)).toBeTruthy();
     });
   });
 
-  it('shows skipped files in conflict summary', async () => {
+  it('shows conflict summary with all counts', async () => {
     vi.mocked(api.checkRunApply).mockResolvedValue({
       runId: 'run-4',
       canApply: false,
@@ -2572,15 +2511,13 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': [makeRunItem('run-4')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
     await waitFor(() => {
       expect(screen.getByText(/1 skipped/)).toBeTruthy();
-      expect(screen.getByText(/Delete not supported/)).toBeTruthy();
     });
   });
 
@@ -2647,24 +2584,14 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': [makeRunItem('run-5')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-    });
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
-    // Approval card should appear
     await waitFor(() => {
-      expect(screen.getByText('Needs confirmation')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
     });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Applied')).toBeTruthy();
-      expect(screen.getAllByText(/2 files/).length).toBeGreaterThan(0);
-    });
-    expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
   it('cleaned workspace still does not show Apply Changes', async () => {
@@ -2734,21 +2661,9 @@ describe('RunCard apply conflict guard', () => {
       timeline: { 'conv-1': runs },
     });
 
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button', { name: 'Apply Changes' });
-      expect(buttons).toHaveLength(2);
-    });
-
-    // Click Apply for run-b (has conflicts)
-    const buttons = screen.getAllByRole('button', { name: 'Apply Changes' });
-    fireEvent.click(buttons[1]!);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Apply disabled due to conflicts/)).toBeTruthy();
-    });
-
-    // Both run cards still show Apply Changes (run-b button stays visible during conflict)
-    expect(screen.getAllByRole('button', { name: 'Apply Changes' })).toHaveLength(2);
+    // Open the panel and check apply is available for the first run
+    await openApplyPanel();
+    expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
   });
 });
 
@@ -2851,7 +2766,7 @@ describe('Acceptance — WorkspaceSetup & empty state', () => {
   });
 });
 
-describe('Acceptance — ConfirmationCard', () => {
+describe('Acceptance — artifact panel apply flow', () => {
   const agents = [makeAgent('agent-default', 'claude-code')];
 
   function makeRunItem(runId: string): ChatTimelineItem {
@@ -2890,19 +2805,15 @@ describe('Acceptance — ConfirmationCard', () => {
     mockedStartRunPreview.mockReset();
     vi.mocked(api.applyRunChanges).mockReset();
     vi.mocked(api.getRunFileChanges).mockReset();
-    vi.mocked(api.getRunFileChanges).mockResolvedValue([
-      {
-        filePath: 'src/confirmation.ts',
-        changeType: 'edit',
-        oldContent: 'before',
-        newContent: 'after',
-        confidence: 'exact',
-        source: 'tool_event',
-      },
-    ]);
+    vi.mocked(api.getRunFileChanges).mockResolvedValue([]);
   });
 
-  it('shows ConfirmationCard with Confirm and Cancel buttons when apply is safe', async () => {
+  it('shows Apply Changes button in the artifact footer and triggers apply', async () => {
+    vi.mocked(api.checkRunApply).mockResolvedValue({
+      runId: 'run-1', canApply: true,
+      files: [{ filePath: 'src/a.ts', changeType: 'create', status: 'safe' }],
+      summary: { safe: 1, conflict: 0, skipped: 0 },
+    });
     vi.mocked(api.requestApplyChanges).mockResolvedValue({
       id: 'approval-acc-1', conversationId: 'conv-1', runId: 'run-1',
       taskId: null, assignmentId: null, actionType: 'apply_changes', status: 'pending',
@@ -2911,66 +2822,37 @@ describe('Acceptance — ConfirmationCard', () => {
     });
 
     renderChatArea({ agents, timeline: { 'conv-1': [makeRunItem('run-1')] } });
-    await screen.findByRole('button', { name: 'Apply Changes' });
+    await openApplyPanel();
+
     fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
 
-    await screen.findByRole('button', { name: 'Confirm' });
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
-    expect(screen.getByText('Needs confirmation')).toBeTruthy();
+    await waitFor(() => {
+      expect(vi.mocked(api.checkRunApply)).toHaveBeenCalledWith('run-1');
+      expect(vi.mocked(api.requestApplyChanges)).toHaveBeenCalledWith('run-1');
+    });
   });
 
-  it('shows Executed after confirm', async () => {
-    vi.mocked(api.requestApplyChanges).mockResolvedValue({
-      id: 'approval-acc-2', conversationId: 'conv-1', runId: 'run-2',
-      taskId: null, assignmentId: null, actionType: 'apply_changes', status: 'pending',
-      title: 'Apply Changes', description: null, payload: null, result: null,
-      errorMessage: null, createdAt: '2026-05-28T00:00:00.000Z', decidedAt: null, executedAt: null,
+  it('shows conflict warning when check fails', async () => {
+    vi.mocked(api.checkRunApply).mockResolvedValue({
+      runId: 'run-2', canApply: false,
+      files: [{ filePath: 'src/a.ts', changeType: 'create', status: 'conflict', reason: 'File already exists' }],
+      summary: { safe: 0, conflict: 1, skipped: 0 },
     });
-    vi.mocked(api.approveApproval).mockResolvedValue({
-      id: 'approval-acc-2', conversationId: 'conv-1', runId: 'run-2',
-      taskId: null, assignmentId: null, actionType: 'apply_changes', status: 'executed',
-      title: 'Apply Changes', description: null, payload: null, result: { status: 'applied' },
-      errorMessage: null, createdAt: '2026-05-28T00:00:00.000Z',
-      decidedAt: '2026-05-28T00:00:01.000Z', executedAt: '2026-05-28T00:00:02.000Z',
-    });
-    vi.mocked(api.getRunChangeApplication).mockResolvedValue({
-        id: 'ca-acc', runId: 'run-2', conversationId: 'conv-1', runWorkspaceId: 'rws-1',
-        status: 'applied', appliedFiles: ['a.ts'], skippedFiles: [],
-        errorMessage: null, appliedAt: '2026-05-28T00:00:00.000Z',
-        createdAt: '2026-05-28T00:00:00.000Z', updatedAt: '2026-05-28T00:00:00.000Z',
-      });
 
     renderChatArea({ agents, timeline: { 'conv-1': [makeRunItem('run-2')] } });
-    await screen.findByRole('button', { name: 'Apply Changes' });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
-    await screen.findByRole('button', { name: 'Confirm' });
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await openApplyPanel();
 
-    await screen.findByText('Executed');
-    expect(screen.getByText('Applied')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
+    await screen.findByText(/1 conflicts/);
   });
 
-  it('shows Cancelled after cancel', async () => {
-    vi.mocked(api.requestApplyChanges).mockResolvedValue({
-      id: 'approval-acc-3', conversationId: 'conv-1', runId: 'run-3',
-      taskId: null, assignmentId: null, actionType: 'apply_changes', status: 'pending',
-      title: 'Apply Changes', description: null, payload: null, result: null,
-      errorMessage: null, createdAt: '2026-05-28T00:00:00.000Z', decidedAt: null, executedAt: null,
-    });
-    vi.mocked(api.rejectApproval).mockResolvedValue({
-      id: 'approval-acc-3', conversationId: 'conv-1', runId: 'run-3',
-      taskId: null, assignmentId: null, actionType: 'apply_changes', status: 'rejected',
-      title: 'Apply Changes', description: null, payload: null, result: null,
-      errorMessage: null, createdAt: '2026-05-28T00:00:00.000Z',
-      decidedAt: '2026-05-28T00:00:01.000Z', executedAt: null,
-    });
+  it('shows apply error message', async () => {
+    vi.mocked(api.requestApplyChanges).mockRejectedValue(new Error('Run workspace has been cleaned'));
 
     renderChatArea({ agents, timeline: { 'conv-1': [makeRunItem('run-3')] } });
-    await screen.findByRole('button', { name: 'Apply Changes' });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
-    await screen.findByRole('button', { name: 'Cancel' });
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await openApplyPanel();
 
-    await screen.findByText('Cancelled');
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Changes' }));
+    await screen.findByText('Run workspace has been cleaned');
   });
 });

@@ -131,68 +131,26 @@ export function DiffCard({
                 {groupChanges.map((change) => {
                   const expanded = openFiles[change.filePath] ?? false;
                   const checkLabel = checkFileMap.get(change.filePath);
-                  const addedCount = getLineCount(change.newContent);
-                  const deletedCount = getLineCount(change.oldContent);
                   const largeDiff = isLargeDiff(change);
                   const diffLoaded = loadedLargeDiffs[change.filePath] ?? false;
                   const showLoadPrompt = largeDiff && expanded && !diffLoaded;
 
                   return (
-                    <div key={change.filePath} className="overflow-hidden rounded-md" style={{ border: '0.5px solid #D8DEE4', backgroundColor: '#FFFFFF' }}>
-                      <button
-                        type="button"
-                        className="w-full px-4 py-3 flex items-center justify-between gap-4 text-left"
-                        onClick={() =>
-                          setOpenFiles((cur) => ({ ...cur, [change.filePath]: !expanded }))
-                        }
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="text-sm font-medium truncate" style={{ color: '#24292F' }}>
-                              {formatRelativePath(change.filePath, workspaceRootPath)}
-                            </div>
-                            <Badge variant="muted">{getChangeTypeLabel(change.changeType)}</Badge>
-                          </div>
-                          <div className="mt-1 text-xs flex flex-wrap items-center gap-2" style={{ color: '#57606A' }}>
-                            <span style={{ color: '#1A7F37' }}>+{addedCount}</span>
-                            <span style={{ color: '#CF222E' }}>-{deletedCount}</span>
-                            {largeDiff && (
-                              <span>Large diff</span>
-                            )}
-                            {checkLabel && (
-                              <>
-                                {checkLabel.startsWith('conflict') && <Badge variant="conflict">conflict</Badge>}
-                                {checkLabel.startsWith('skipped') && <Badge variant="skipped">skipped</Badge>}
-                                {checkLabel === 'safe' && <Badge variant="applied">safe</Badge>}
-                                <span>{checkLabel}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <span className="shrink-0 text-xs" style={{ color: '#57606A' }}>
-                          {expanded ? 'Collapse' : 'Expand'}
-                        </span>
-                      </button>
-
-                      {showLoadPrompt && (
-                        <div className="px-4 py-3 text-xs" style={{ borderTop: '0.5px solid #D8DEE4', color: '#57606A', backgroundColor: '#F6F8FA' }}>
-                          <div>Large diff, click to load</div>
-                          <button
-                            type="button"
-                            className="mt-3 rounded-md px-3 py-2 text-xs font-medium"
-                            style={{ backgroundColor: '#FFFFFF', color: '#24292F', border: '0.5px solid #D8DEE4' }}
-                            aria-label={`Load diff for ${formatRelativePath(change.filePath, workspaceRootPath)}`}
-                            onClick={() =>
-                              setLoadedLargeDiffs((cur) => ({ ...cur, [change.filePath]: true }))
-                            }
-                          >
-                            Load Diff
-                          </button>
-                        </div>
-                      )}
-
-                      {expanded && (!largeDiff || diffLoaded) && <UnifiedDiffView change={change} />}
-                    </div>
+                    <FileDiffBlock
+                      key={change.filePath}
+                      change={change}
+                      workspaceRootPath={workspaceRootPath}
+                      expanded={expanded}
+                      checkLabel={checkLabel}
+                      largeDiff={largeDiff}
+                      showLoadPrompt={showLoadPrompt}
+                      onToggle={() =>
+                        setOpenFiles((cur) => ({ ...cur, [change.filePath]: !expanded }))
+                      }
+                      onLoadLargeDiff={() =>
+                        setLoadedLargeDiffs((cur) => ({ ...cur, [change.filePath]: true }))
+                      }
+                    />
                   );
                 })}
               </div>
@@ -200,6 +158,100 @@ export function DiffCard({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+export function FileDiffBlock({
+  change,
+  workspaceRootPath = null,
+  expanded = true,
+  checkLabel,
+  largeDiff = false,
+  showLoadPrompt = false,
+  onToggle,
+  onLoadLargeDiff,
+}: {
+  change: FileChange;
+  workspaceRootPath?: string | null;
+  expanded?: boolean;
+  checkLabel?: string;
+  largeDiff?: boolean;
+  showLoadPrompt?: boolean;
+  onToggle?: () => void;
+  onLoadLargeDiff?: () => void;
+}) {
+  const addedCount = getLineCount(change.newContent);
+  const deletedCount = getLineCount(change.oldContent);
+  const relativePath = formatRelativePath(change.filePath, workspaceRootPath);
+  const headerContent = (
+    <>
+      <div className="flex min-w-0 items-center gap-2">
+        <code className="truncate text-[13px] font-medium" style={{ color: '#24292F' }}>
+          {relativePath}
+        </code>
+        <Badge variant="muted">{getChangeTypeLabel(change.changeType)}</Badge>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 text-xs" style={{ color: '#57606A' }}>
+        <span style={{ color: '#1A7F37' }}>+{addedCount}</span>
+        <span style={{ color: '#CF222E' }}>-{deletedCount}</span>
+        {largeDiff && <span>Large diff</span>}
+        {checkLabel && (
+          <>
+            {checkLabel.startsWith('conflict') && <Badge variant="conflict">conflict</Badge>}
+            {checkLabel.startsWith('skipped') && <Badge variant="skipped">skipped</Badge>}
+            {checkLabel === 'safe' && <Badge variant="applied">safe</Badge>}
+            <span>{checkLabel}</span>
+          </>
+        )}
+        {onToggle && <span>{expanded ? 'Collapse' : 'Expand'}</span>}
+      </div>
+    </>
+  );
+  const headerStyle = {
+    backgroundColor: '#F6F8FA',
+    borderBottom: expanded ? '0.5px solid var(--app-border)' : undefined,
+  };
+
+  return (
+    <div
+      className="mb-6 overflow-hidden rounded-lg"
+      style={{
+        border: '0.5px solid var(--app-border)',
+        backgroundColor: '#FFFFFF',
+      }}
+    >
+      {onToggle ? (
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-4 px-4 py-2 text-left"
+          style={headerStyle}
+          onClick={onToggle}
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className="flex w-full items-center justify-between gap-4 px-4 py-2" style={headerStyle}>
+          {headerContent}
+        </div>
+      )}
+
+      {showLoadPrompt && (
+        <div className="px-4 py-3 text-xs" style={{ color: '#57606A', backgroundColor: '#F6F8FA' }}>
+          <div>Large diff, click to load</div>
+          <button
+            type="button"
+            className="mt-3 rounded-md px-3 py-2 text-xs font-medium"
+            style={{ backgroundColor: '#FFFFFF', color: '#24292F', border: '0.5px solid #D0D7DE' }}
+            aria-label={`Load diff for ${relativePath}`}
+            onClick={onLoadLargeDiff}
+          >
+            Load Diff
+          </button>
+        </div>
+      )}
+
+      {expanded && !showLoadPrompt && <UnifiedDiffView change={change} />}
     </div>
   );
 }
@@ -339,41 +391,62 @@ export function UnifiedDiffView({ change }: { change: FileChange }) {
   }
 
   return (
-    <div className="overflow-x-auto" style={{ borderTop: '0.5px solid #D8DEE4', backgroundColor: '#FFFFFF' }}>
+    <div
+      className="diff-scrollbar overflow-x-auto"
+      style={{ backgroundColor: '#FFFFFF' }}
+    >
       {lines.map((line, index) => {
         const sign = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
-        const color = line.kind === 'add'
-          ? '#1A7F37'
-          : line.kind === 'delete'
-            ? '#CF222E'
-            : '#57606A';
-        const textColor = '#24292F';
+        const displayLine = line.kind === 'delete' ? line.oldLine : line.newLine;
         const backgroundColor = line.kind === 'add'
-          ? '#E6FFEC'
+          ? '#e6ffec'
           : line.kind === 'delete'
-            ? '#FFEBE9'
+            ? '#ffebe9'
             : '#FFFFFF';
+        const dividerColor = line.kind === 'add'
+          ? '#B7E4C7'
+          : line.kind === 'delete'
+            ? '#FFD7D5'
+            : '#D0D7DE';
 
         return (
           <div
             key={`${line.kind}-${index}-${line.text}`}
-            className="grid"
+            className="diff-row flex w-full"
             style={{
-              gridTemplateColumns: '40px 40px 28px minmax(0, 1fr)',
+              display: 'flex',
+              width: '100%',
+              minWidth: 'max-content',
+              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+              fontSize: 12,
+              lineHeight: '20px',
               backgroundColor,
-              borderTop: index === 0 ? undefined : '0.5px solid #D8DEE4',
             }}
           >
-            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7781', backgroundColor: '#F6F8FA', borderRight: '0.5px solid #D8DEE4' }}>
-              {line.oldLine ?? ''}
+            <div
+              className="diff-line-number shrink-0 text-right"
+              style={{
+                minWidth: 48,
+                paddingRight: 12,
+                color: '#6E7781',
+                borderRight: `0.5px solid ${dividerColor}`,
+                userSelect: 'none',
+              }}
+            >
+              {displayLine ?? ''}
             </div>
-            <div className="px-2 py-1 text-right text-xs select-none" style={{ color: '#6E7781', backgroundColor: '#F6F8FA', borderRight: '0.5px solid #D8DEE4' }}>
-              {line.newLine ?? ''}
-            </div>
-            <div className="px-2 py-1 text-center text-xs select-none font-mono" style={{ color }}>
-              {sign}
-            </div>
-            <pre className="px-2 py-1 text-xs whitespace-pre-wrap break-all font-mono" style={{ color: textColor, margin: 0 }}>
+            <pre
+              className="diff-code-cell flex-1"
+              style={{
+                margin: 0,
+                paddingLeft: 16,
+                paddingRight: 16,
+                color: '#24292F',
+                whiteSpace: 'pre',
+                wordBreak: 'break-all',
+                fontFamily: 'inherit',
+              }}
+            >
               {`${sign} ${line.text}`}
             </pre>
           </div>

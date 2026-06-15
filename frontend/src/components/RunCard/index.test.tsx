@@ -15,6 +15,9 @@ vi.mock('../../services/api', () => ({
     requestApplyChanges: vi.fn(),
     requestApplyAndCommit: vi.fn(),
     startRunPreview: vi.fn(),
+    getRunDeployScripts: vi.fn(),
+    startRunDeploy: vi.fn(),
+    getRunDeploy: vi.fn(),
     approveApproval: vi.fn(),
     rejectApproval: vi.fn(),
   },
@@ -25,6 +28,9 @@ const mockedGetRun = vi.mocked(api.getRun);
 const mockedGetConversationApprovals = vi.mocked(api.getConversationApprovals);
 const mockedCheckRunApply = vi.mocked(api.checkRunApply);
 const mockedRequestApplyAndCommit = vi.mocked(api.requestApplyAndCommit);
+const mockedGetRunDeployScripts = vi.mocked(api.getRunDeployScripts);
+const mockedStartRunDeploy = vi.mocked(api.startRunDeploy);
+const mockedGetRunDeploy = vi.mocked(api.getRunDeploy);
 
 function makeRun(runId: string): ChatTimelineItem {
   return {
@@ -132,14 +138,24 @@ describe('RunCard action states', () => {
       decidedAt: null,
       executedAt: null,
     });
+    mockedGetRunDeployScripts.mockReset();
+    mockedGetRunDeployScripts.mockResolvedValue({
+      runId: 'run-1',
+      scripts: ['build'],
+      defaultScript: 'build',
+    });
+    mockedStartRunDeploy.mockReset();
+    mockedGetRunDeploy.mockReset();
+    mockedGetRunDeploy.mockResolvedValue(null);
   });
 
   it('auto-loads execution records when a completed run is expanded', async () => {
     renderRunCard({ ...makeRun('run-detail'), eventCount: 69 });
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
+    expect(screen.queryByText('展开查看执行详情')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
 
@@ -149,23 +165,52 @@ describe('RunCard action states', () => {
     expect(screen.queryByRole('button', { name: /加载 69 条执行记录/ })).toBeNull();
   });
 
-  it('shows artifact and apply actions only when file changes exist', async () => {
+  it('uses the agent name as the title and does not promote machine ids', async () => {
+    renderRunCard({
+      ...makeRun('75b3e7cc-run-id'),
+      agentId: '75b3e7cc-machine-id',
+      agentName: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Agent')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
+    });
+
+    expect(screen.queryByText('75b3e7cc-machine-id')).toBeNull();
+    expect(screen.queryByText('75b3e7cc-run-id')).toBeNull();
+  });
+
+  it('also masks uuid-like agent names before rendering the title', async () => {
+    renderRunCard({
+      ...makeRun('run-safe-title'),
+      agentName: '75b3e7cc-7110-4d7d-a501-2e89c64bb031',
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Agent')).toBeTruthy();
+    });
+    expect(screen.queryByText('75b3e7cc-7110-4d7d-a501-2e89c64bb031')).toBeNull();
+  });
+
+  it('shows a lightweight right-panel guide instead of inline apply actions', async () => {
     const onFocusArtifacts = vi.fn();
     renderRunCard(makeRun('run-1'), false, onFocusArtifacts);
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '查看产物' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Apply Changes' })).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Apply and Commit' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: '在右侧审查并部署' })).toBeTruthy();
     });
+    expect(screen.queryByRole('button', { name: '查看产物' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Apply and Commit' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看产物' }));
+    fireEvent.click(screen.getByRole('button', { name: '在右侧审查并部署' }));
     expect(onFocusArtifacts).toHaveBeenCalledWith('run-1', 'diff');
   });
 
@@ -188,7 +233,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-2'));
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -232,7 +277,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-3'));
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -265,7 +310,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-4'));
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -278,26 +323,22 @@ describe('RunCard action states', () => {
     expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
-  it('requests an apply-and-commit approval with the new action type', async () => {
+  it('does not request apply-and-commit from the left run card', async () => {
     renderRunCard(makeRun('run-commit'));
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Apply and Commit' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: '在右侧审查并部署' })).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply and Commit' }));
-
-    await waitFor(() => {
-      expect(mockedCheckRunApply).toHaveBeenCalledWith('run-commit');
-      expect(mockedRequestApplyAndCommit).toHaveBeenCalledWith('run-commit');
-      expect(screen.getByText('Needs confirmation')).toBeTruthy();
-    });
+    expect(screen.queryByRole('button', { name: 'Apply and Commit' })).toBeNull();
+    expect(mockedCheckRunApply).not.toHaveBeenCalledWith('run-commit');
+    expect(mockedRequestApplyAndCommit).not.toHaveBeenCalledWith('run-commit');
   });
 
   it('hides manual apply actions for auto-merge DAG runs and shows merge status instead', async () => {
@@ -333,7 +374,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-auto'));
 
     await waitFor(() => {
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -341,9 +382,79 @@ describe('RunCard action states', () => {
     await waitFor(() => {
       expect(screen.getByText('已自动合并到项目')).toBeTruthy();
     });
+    const footer = document.querySelector('.run-card-footer');
+    expect(footer).toBeTruthy();
+    expect(footer?.textContent).toContain('已自动合并到项目');
     expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Apply and Commit' })).toBeNull();
     expect(screen.queryByText('这些改动还停留在隔离工作区里。应用到项目后，后续 Run 才会基于这次结果继续协作。')).toBeNull();
+  });
+
+  it('renders all agent text blocks inside one output panel', async () => {
+    renderRunCard({
+      ...makeRun('run-agent-text'),
+      blocks: [
+        {
+          kind: 'agent_text',
+          id: 'text-1',
+          content: 'First paragraph',
+        },
+        {
+          kind: 'agent_text',
+          id: 'text-2',
+          content: 'Second paragraph',
+        },
+      ],
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '展开' }));
+
+    const panels = document.querySelectorAll('.agent-output-panel');
+    expect(panels.length).toBe(1);
+    expect(panels[0]?.textContent).toContain('First paragraph');
+    expect(panels[0]?.textContent).toContain('Second paragraph');
+  });
+
+  it('shows a breathing cursor while agent text is streaming', async () => {
+    renderRunCard({
+      ...makeRun('run-streaming-text'),
+      status: 'running',
+      finishedAt: null,
+      blocks: [
+        {
+          kind: 'agent_text',
+          id: 'text-streaming',
+          content: 'Streaming **markdown',
+        },
+      ],
+    }, true);
+
+    expect(await screen.findByText(/Streaming/)).toBeTruthy();
+    expect(document.querySelector('.agent-output-panel .typing-cursor')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '展开执行细节 ↓' })).toBeNull();
+  });
+
+  it('collapses long completed agent output and allows expanding it', async () => {
+    const scrollHeightSpy = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(220);
+
+    renderRunCard({
+      ...makeRun('run-long-text'),
+      blocks: [
+        {
+          kind: 'agent_text',
+          id: 'text-long',
+          content: Array.from({ length: 20 }, (_, index) => `Line ${index + 1}`).join('\n\n'),
+        },
+      ],
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '展开' }));
+
+    expect(await screen.findByRole('button', { name: '展开执行细节 ↓' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '展开执行细节 ↓' }));
+    expect(screen.getByRole('button', { name: '↑ 收起' })).toBeTruthy();
+
+    scrollHeightSpy.mockRestore();
   });
 
   it('refetches file changes after the run transitions to completed', async () => {
@@ -396,11 +507,11 @@ describe('RunCard action states', () => {
 
     await waitFor(() => {
       expect(mockedGetRunCardSummary).toHaveBeenCalledTimes(2);
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '展开' })).toBeTruthy();
     });
   });
 
-  it('keeps running details collapsed by default and shows a working summary', async () => {
+  it('keeps running details expanded without a duplicate loading summary bar', async () => {
     renderRunCard({
       ...makeRun('run-running'),
       status: 'running',
@@ -424,10 +535,40 @@ describe('RunCard action states', () => {
     }, true);
 
     await waitFor(() => {
-      expect(screen.getByText('运行中')).toBeTruthy();
-      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+      expect(screen.getByText('执行中')).toBeTruthy();
+      expect(screen.getByRole('button', { name: '收起' })).toBeTruthy();
       expect(screen.queryByText('工具调用')).toBeNull();
+      expect(screen.queryByText('展开查看执行详情')).toBeNull();
+      expect(screen.queryByText('正在工作...')).toBeNull();
     });
+  });
+
+  it('shows running tool calls as a single-line terminal strip', async () => {
+    renderRunCard({
+      ...makeRun('run-running-tool'),
+      status: 'running',
+      finishedAt: null,
+      blocks: [
+        {
+          kind: 'tool_call',
+          id: 'tool-running',
+          toolUseId: 'tool-use-running',
+          toolName: 'Bash',
+          status: 'running',
+          inputPreview: 'npm run dev',
+          input: { command: 'npm run dev' },
+          summary: null,
+          resultContent: null,
+          partialJson: '',
+          expanded: false,
+          resultKind: 'bash',
+        },
+      ],
+    }, true);
+
+    expect(await screen.findByText(/Bash npm run dev/)).toBeTruthy();
+    expect(document.querySelector('.typing-cursor')).toBeTruthy();
+    expect(screen.queryByText('正在工作...')).toBeNull();
   });
 
   it('shows tool calls immediately after expanding a run card', async () => {
@@ -454,7 +595,9 @@ describe('RunCard action states', () => {
     fireEvent.click(await screen.findByRole('button', { name: '展开' }));
 
     expect(screen.getByText('Read')).toBeTruthy();
-    expect(screen.getByText('✓')).toBeTruthy();
+    expect(screen.getByText('EXECUTED TOOLS')).toBeTruthy();
+    expect(screen.queryByText('✓')).toBeNull();
+    expect(document.querySelector('[style*="rgb(16, 185, 129)"]')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '展开' })).toBeNull();
   });
 
@@ -483,7 +626,8 @@ describe('RunCard action states', () => {
     fireEvent.click(await screen.findByRole('button', { name: '展开' }));
 
     expect(screen.getByText('Bash')).toBeTruthy();
-    expect(screen.getByText('✗')).toBeTruthy();
+    expect(screen.queryByText('✗')).toBeNull();
+    expect(document.querySelector('[style*="rgb(239, 68, 68)"]')).toBeTruthy();
     expect(document.querySelector('pre')).toBeNull();
   });
 });

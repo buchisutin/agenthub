@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../store/useApp';
 import { api } from '../../services/api';
 import { loadConversationRuntime } from '../../store/runtimeActions';
 import { socketService } from '../../services/socket';
+import { AgentSettingsModal } from '../AgentSettingsModal';
 import { Badge } from '../ui/Badge';
 import type { BadgeVariant } from '../ui/Badge';
-import type { WorkspaceValidationResult } from '../../types';
+import type { Agent, ConversationType, WorkspaceValidationResult } from '../../types';
 
 interface WorkspaceSetupProps {
   compact?: boolean;
@@ -13,17 +14,21 @@ interface WorkspaceSetupProps {
 }
 
 const DEBOUNCE_MS = 800;
-const PLACEHOLDER = '/Users/me/myproject';
+const PLACEHOLDER = '粘贴项目绝对路径，如 /Users/me/myproject';
 
 export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
-  const { dispatch } = useApp();
+  const { state, dispatch } = useApp();
   const [rootPath, setRootPath] = useState('');
+  const [conversationType, setConversationType] = useState<ConversationType>('group');
+  const [singleAgentId, setSingleAgentId] = useState('');
   const [validating, setValidating] = useState(false);
   const [creating, setCreating] = useState(false);
   const [validation, setValidation] = useState<WorkspaceValidationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [runtimeAvailable, setRuntimeAvailable] = useState<boolean | null>(null);
+  const [showAgentSettings, setShowAgentSettings] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enabledAgents = useMemo(() => state.agents.filter((agent) => agent.enabled), [state.agents]);
 
   // Check runtime once on mount (for the badge).
   useEffect(() => {
@@ -31,6 +36,16 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
       .then((c) => setRuntimeAvailable(c.available))
       .catch(() => setRuntimeAvailable(false));
   }, []);
+
+  useEffect(() => {
+    if (enabledAgents.some((agent) => agent.id === singleAgentId)) return;
+    const defaultAgent = enabledAgents.find((agent) => agent.is_default) ?? enabledAgents[0];
+    if (defaultAgent) setSingleAgentId(defaultAgent.id);
+  }, [enabledAgents, singleAgentId]);
+
+  const handleAgentsChanged = useCallback((agents: Agent[]) => {
+    dispatch({ type: 'SET_AGENTS', payload: agents });
+  }, [dispatch]);
 
   const triggerValidate = useCallback((path: string) => {
     if (!path.trim()) {
@@ -62,7 +77,9 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
       const result = await api.createConversationWithWorkspace({
         title: pathBasename(rootPath.trim()),
         rootPath: rootPath.trim(),
+        type: conversationType,
       });
+      if (conversationType === 'single' && singleAgentId) writeSingleAgentId(result.conversation.id, singleAgentId);
       dispatch({ type: 'ADD_CONVERSATION', payload: result.conversation });
       dispatch({ type: 'SET_WORKSPACE', payload: { convId: result.conversation.id, workspace: result.workspace } });
       dispatch({ type: 'SELECT_CONVERSATION', payload: result.conversation.id });
@@ -93,9 +110,78 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const card = (
     <div className="agenthub-card w-full max-w-[460px] p-8">
       <div className="space-y-5">
-        <h2 className="text-xl font-semibold tracking-[-0.02em]" style={{ color: 'var(--app-text)' }}>
-          开始协作
-        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold tracking-[-0.02em]" style={{ color: 'var(--app-text)' }}>
+            开始协作
+          </h2>
+          <button
+            type="button"
+            onClick={() => setShowAgentSettings(true)}
+            className="rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-90"
+            style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
+          >
+            配置 Agents
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <ModeButton
+            active={conversationType === 'single'}
+            title="单聊"
+            description="选一个 Agent，一对一对话"
+            onClick={() => setConversationType('single')}
+          />
+          <ModeButton
+            active={conversationType === 'group'}
+            title="群聊"
+            description="@成员或 @orchestrator 协作"
+            onClick={() => setConversationType('group')}
+          />
+        </div>
+
+        {conversationType === 'single' && (
+          <div className="space-y-2">
+            <div className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
+              单聊对象
+            </div>
+            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1" data-testid="agent-picker-list">
+              {enabledAgents.map((agent) => (
+                <AgentChoiceCard
+                  key={agent.id}
+                  active={agent.id === singleAgentId}
+                  name={agent.name}
+                  description={describeAgent(agent)}
+                  onClick={() => setSingleAgentId(agent.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {conversationType === 'group' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
+                群聊成员
+              </div>
+              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+                {enabledAgents.length} 个可用
+              </span>
+            </div>
+            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1" data-testid="agent-picker-list">
+              {enabledAgents.map((agent) => (
+                <AgentChoiceCard
+                  key={agent.id}
+                  active={agent.is_default}
+                  name={agent.name}
+                  description={describeAgent(agent)}
+                  onClick={() => setShowAgentSettings(true)}
+                  actionLabel={agent.is_default ? '默认' : '配置'}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-3">
           <div className="relative">
@@ -115,10 +201,6 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
               />
             )}
           </div>
-
-          <p className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-            Web 版本需手动粘贴绝对路径
-          </p>
 
           {valid && (
             <div className="flex flex-wrap items-center gap-2">
@@ -167,6 +249,12 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
           </span>
         </button>
       </div>
+      {showAgentSettings && (
+        <AgentSettingsModal
+          onClose={() => setShowAgentSettings(false)}
+          onAgentsChanged={handleAgentsChanged}
+        />
+      )}
     </div>
   );
 
@@ -177,6 +265,106 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
       {card}
     </div>
   );
+}
+
+function AgentChoiceCard({
+  active,
+  name,
+  description,
+  onClick,
+  actionLabel,
+}: {
+  active: boolean;
+  name: string;
+  description: string;
+  onClick: () => void;
+  actionLabel?: string;
+}) {
+  const marker = actionLabel ?? (active ? '✓' : '');
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className="rounded-lg px-3 py-3 text-left transition-colors"
+      style={{
+        backgroundColor: active ? '#EFF8FF' : 'var(--card-bg)',
+        border: active ? '1px solid #93C5FD' : '0.5px solid var(--app-border)',
+        boxShadow: active ? '0 0 0 2px rgba(147, 197, 253, 0.18)' : 'none',
+        color: 'var(--app-text)',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{name}</div>
+          <div className="mt-1 line-clamp-2 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+            {description}
+          </div>
+        </div>
+        <span
+          className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold"
+          style={{
+            backgroundColor: active ? '#1A6BCC' : 'var(--card-subtle)',
+            color: active ? '#FFFFFF' : 'var(--app-text-secondary)',
+            border: active ? '0.5px solid #1A6BCC' : '0.5px solid var(--app-border)',
+          }}
+        >
+          {marker}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function describeAgent(agent: { name: string; slug: string; instructions: string | null }) {
+  const custom = agent.instructions?.trim();
+  if (custom) return custom;
+  const key = `${agent.name} ${agent.slug}`.toLowerCase();
+  if (key.includes('builder')) return '负责实现功能、修改代码和整理基础工程结构。';
+  if (key.includes('tester') || key.includes('test')) return '负责补充测试、验证行为和发现回归风险。';
+  if (key.includes('review')) return '负责代码审查、风险判断和改进建议。';
+  if (key.includes('design') || key.includes('frontend')) return '负责前端界面、交互体验和视觉细节。';
+  return '适合一对一处理具体开发任务。';
+}
+
+function ModeButton({
+  active,
+  title,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg px-3 py-3 text-left transition-colors"
+      style={{
+        backgroundColor: active ? '#EFF8FF' : 'var(--card-bg)',
+        border: active ? '1px solid #BFDBFE' : '0.5px solid var(--app-border)',
+        color: 'var(--app-text)',
+      }}
+    >
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>{description}</div>
+    </button>
+  );
+}
+
+function singleAgentStorageKey(conversationId: string) {
+  return `agenthub.singleAgent.${conversationId}`;
+}
+
+function writeSingleAgentId(conversationId: string, agentId: string) {
+  try {
+    localStorage.setItem(singleAgentStorageKey(conversationId), agentId);
+  } catch {
+    // The selected agent is a UI preference; creation should still succeed.
+  }
 }
 
 function buildBadges(validation: WorkspaceValidationResult, runtimeAvailable: boolean | null) {

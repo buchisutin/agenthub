@@ -360,6 +360,10 @@ function buildPlannerPrompt(
     "Each task must include a stable short id such as t1, t2, t3.",
     "Each task must include depends_on as an array of task ids it waits for. Use [] when the task has no dependencies.",
     "Use dependencies when a task cannot start until another task's deliverable exists, such as tests after implementation or frontend integration after backend API readiness.",
+    "Prefer parallel root tasks when deliverables touch independent files or can be safely merged later.",
+    "For UI feature work such as a feedback form, split independent component logic, styles, assets, or copy into parallel root tasks when each task can produce a valid standalone change.",
+    "If a task must import or directly use a file created by another task, keep the dependency unless the upstream task is only optional styling, assets, or copy.",
+    "For build verification tasks, depends_on should include every implementation or integration task it validates.",
     "Never create circular dependencies.",
     "Workspace status:",
     JSON.stringify({

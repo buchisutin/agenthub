@@ -533,6 +533,10 @@ describe("Minimal orchestrator", () => {
         expect(prompt).toContain("prefer setup tasks that create the initial project structure");
         expect(prompt).toContain("do not mention commit hashes in task titles");
         expect(prompt).toContain("not a summary of project architecture");
+        expect(prompt).toContain("Prefer parallel root tasks when deliverables touch independent files or can be safely merged later");
+        expect(prompt).toContain("For UI feature work such as a feedback form, split independent component logic, styles, assets, or copy into parallel root tasks when each task can produce a valid standalone change");
+        expect(prompt).toContain("If a task must import or directly use a file created by another task, keep the dependency");
+        expect(prompt).toContain("For build verification tasks, depends_on should include every implementation or integration task it validates");
         expect(agents.some((agent) => agent.slug === "frontend-agent")).toBe(true);
         expect(workspaceStatus).toMatchObject({
           state: "clean",

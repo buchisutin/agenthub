@@ -9,6 +9,7 @@ import type { ChatTimelineItem, FileChange } from '../../types';
 vi.mock('../../services/api', () => ({
   api: {
     getRunCardSummary: vi.fn(),
+    getRun: vi.fn(),
     getConversationApprovals: vi.fn(),
     checkRunApply: vi.fn(),
     requestApplyChanges: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('../../services/api', () => ({
 }));
 
 const mockedGetRunCardSummary = vi.mocked(api.getRunCardSummary);
+const mockedGetRun = vi.mocked(api.getRun);
 const mockedGetConversationApprovals = vi.mocked(api.getConversationApprovals);
 const mockedCheckRunApply = vi.mocked(api.checkRunApply);
 const mockedRequestApplyAndCommit = vi.mocked(api.requestApplyAndCommit);
@@ -39,6 +41,31 @@ function makeRun(runId: string): ChatTimelineItem {
     finishedAt: '2026-05-28T00:01:00.000Z',
     blocks: [],
     error: null,
+  };
+}
+
+function makeRunDetail(runId: string) {
+  return {
+    id: runId,
+    conversation_id: 'conv-1',
+    task_id: null,
+    assignment_id: null,
+    agent_id: 'agent-1',
+    runtime_id: null,
+    agent_session_id: null,
+    source_message_id: null,
+    workspace_id: 'ws-1',
+    prompt: 'test prompt',
+    trigger_type: 'chat' as const,
+    trigger_source_id: 'conv-1',
+    requested_by: 'user',
+    status: 'completed' as const,
+    pid: null,
+    exit_code: 0,
+    error_message: null,
+    started_at: '2026-05-28T00:00:00.000Z',
+    finished_at: '2026-05-28T00:01:00.000Z',
+    events: [],
   };
 }
 
@@ -76,6 +103,8 @@ describe('RunCard action states', () => {
       mergeStatus: null,
       merge: null,
     });
+    mockedGetRun.mockReset();
+    mockedGetRun.mockImplementation(async (runId) => makeRunDetail(runId));
     mockedGetConversationApprovals.mockReset();
     mockedGetConversationApprovals.mockResolvedValue([]);
     mockedCheckRunApply.mockReset();
@@ -105,12 +134,27 @@ describe('RunCard action states', () => {
     });
   });
 
+  it('auto-loads execution records when a completed run is expanded', async () => {
+    renderRunCard({ ...makeRun('run-detail'), eventCount: 69 });
+
+    await waitFor(() => {
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '展开' }));
+
+    await waitFor(() => {
+      expect(mockedGetRun).toHaveBeenCalledWith('run-detail');
+    });
+    expect(screen.queryByRole('button', { name: /加载 69 条执行记录/ })).toBeNull();
+  });
+
   it('shows artifact and apply actions only when file changes exist', async () => {
     const onFocusArtifacts = vi.fn();
     renderRunCard(makeRun('run-1'), false, onFocusArtifacts);
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -144,7 +188,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-2'));
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 0 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -188,7 +232,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-3'));
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -221,7 +265,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-4'));
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -238,7 +282,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-commit'));
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -289,7 +333,7 @@ describe('RunCard action states', () => {
     renderRunCard(makeRun('run-auto'));
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
 
     fireEvent.click(screen.getByRole('button', { name: '展开' }));
@@ -352,7 +396,7 @@ describe('RunCard action states', () => {
 
     await waitFor(() => {
       expect(mockedGetRunCardSummary).toHaveBeenCalledTimes(2);
-      expect(screen.getByText('frontend-agent 完成了「test prompt」 · 1 files')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
     });
   });
 
@@ -380,8 +424,66 @@ describe('RunCard action states', () => {
     }, true);
 
     await waitFor(() => {
-      expect(screen.getByText('frontend-agent 正在处理「test prompt」')).toBeTruthy();
+      expect(screen.getByText('运行中')).toBeTruthy();
+      expect(screen.getByText('展开查看执行详情')).toBeTruthy();
       expect(screen.queryByText('工具调用')).toBeNull();
     });
+  });
+
+  it('shows tool calls immediately after expanding a run card', async () => {
+    renderRunCard({
+      ...makeRun('run-tools'),
+      blocks: [
+        {
+          kind: 'tool_call',
+          id: 'tool-1',
+          toolUseId: 'tool-use-1',
+          toolName: 'Read',
+          status: 'completed',
+          inputPreview: '/tmp/workspace/src/app.tsx',
+          input: { file_path: '/tmp/workspace/src/app.tsx' },
+          summary: 'read file',
+          resultContent: null,
+          partialJson: '',
+          expanded: false,
+          resultKind: 'read',
+        },
+      ],
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '展开' }));
+
+    expect(screen.getByText('Read')).toBeTruthy();
+    expect(screen.getByText('✓')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '展开' })).toBeNull();
+  });
+
+  it('keeps failed tool rows compact and avoids duplicate error text', async () => {
+    const duplicateMessage = 'This Bash command contains multiple operations. The following part requires approval: curl -s http://localhost:3000/health';
+    renderRunCard({
+      ...makeRun('run-failed-tool'),
+      blocks: [
+        {
+          kind: 'tool_call',
+          id: 'tool-failed',
+          toolUseId: 'tool-use-failed',
+          toolName: 'Bash',
+          status: 'error',
+          inputPreview: 'node index.js & sleep 1 curl -s http://localhost:3000/health',
+          input: { command: 'node index.js & sleep 1 curl -s http://localhost:3000/health' },
+          summary: duplicateMessage,
+          resultContent: duplicateMessage,
+          partialJson: '',
+          expanded: false,
+          resultKind: 'bash',
+        },
+      ],
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: '展开' }));
+
+    expect(screen.getByText('Bash')).toBeTruthy();
+    expect(screen.getByText('✗')).toBeTruthy();
+    expect(document.querySelector('pre')).toBeNull();
   });
 });

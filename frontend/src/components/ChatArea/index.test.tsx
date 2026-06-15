@@ -23,6 +23,28 @@ vi.mock('../../services/api', async (importOriginal) => {
       getConversationTasks: vi.fn(),
       getConversationAssignments: vi.fn(),
       getTaskDetail: vi.fn(),
+      getRun: vi.fn().mockResolvedValue({
+        id: 'run-detail',
+        conversation_id: 'conv-1',
+        task_id: null,
+        assignment_id: null,
+        agent_id: 'agent-default',
+        runtime_id: null,
+        agent_session_id: null,
+        source_message_id: null,
+        workspace_id: 'ws-1',
+        prompt: 'detail',
+        trigger_type: 'chat',
+        trigger_source_id: 'conv-1',
+        requested_by: 'user',
+        status: 'completed',
+        pid: null,
+        exit_code: 0,
+        error_message: null,
+        started_at: '2026-05-28T00:00:00.000Z',
+        finished_at: '2026-05-28T00:01:00.000Z',
+        events: [],
+      }),
       updateTaskStatus: vi.fn(),
       rerunTask: vi.fn(),
       getRunFileChanges: vi.fn(),
@@ -77,6 +99,17 @@ vi.mock('../../services/socket', () => ({
   },
 }));
 
+function getTaskRowButtonByTitle(title: string) {
+  const button = screen
+    .getAllByText(title)
+    .map((node) => node.closest('button'))
+    .find((node): node is HTMLButtonElement => Boolean(node));
+  if (!button) {
+    throw new Error(`Task row button not found: ${title}`);
+  }
+  return button;
+}
+
 const mockedStartRun = vi.mocked(startRun);
 const mockedGetRunFileChanges = vi.mocked(api.getRunFileChanges);
 const mockedGetRunCardSummary = vi.mocked(api.getRunCardSummary);
@@ -89,7 +122,7 @@ const mockedGetConversationAssignments = vi.mocked(api.getConversationAssignment
 const mockedGetTaskDetail = vi.mocked(api.getTaskDetail);
 const mockedUpdateTaskStatus = vi.mocked(api.updateTaskStatus);
 const mockedRerunTask = vi.mocked(api.rerunTask);
-const inputPlaceholder = /Ask agents to build/i;
+const inputPlaceholder = /群聊|单聊/i;
 const defaultRunCardFileChanges = [
   {
     filePath: 'src/example.ts',
@@ -184,6 +217,7 @@ function renderChatArea({
   plansByConversation = {},
   activeRunIdsByConversation = {},
   selectedConvId = 'conv-1',
+  conversationType = 'group',
 }: {
   agents: Agent[];
   workspace?: Workspace | null;
@@ -192,9 +226,21 @@ function renderChatArea({
   plansByConversation?: AppState['plansByConversation'];
   activeRunIdsByConversation?: Record<string, string[]>;
   selectedConvId?: string | null;
+  conversationType?: 'single' | 'group';
 }) {
   const state: AppState = {
-    conversations: [],
+    conversations: selectedConvId
+      ? [{
+          id: selectedConvId,
+          title: 'Test conversation',
+          type: conversationType,
+          task_id: 'task-1',
+          agent_platform: 'claude_cli',
+          created_at: '2026-05-28T00:00:00.000Z',
+          updated_at: '2026-05-28T00:00:00.000Z',
+          task: null,
+        }]
+      : [],
     selectedConvId,
     agents,
     workspaces: { 'conv-1': workspace },
@@ -231,6 +277,7 @@ function renderChatAreaStateful({
   plansByConversation = {},
   activeRunIdsByConversation = {},
   selectedConvId = 'conv-1',
+  conversationType = 'group',
 }: {
   agents: Agent[];
   workspace?: Workspace | null;
@@ -239,9 +286,21 @@ function renderChatAreaStateful({
   plansByConversation?: AppState['plansByConversation'];
   activeRunIdsByConversation?: Record<string, string[]>;
   selectedConvId?: string | null;
+  conversationType?: 'single' | 'group';
 }) {
   const state: AppState = {
-    conversations: [],
+    conversations: selectedConvId
+      ? [{
+          id: selectedConvId,
+          title: 'Test conversation',
+          type: conversationType,
+          task_id: 'task-1',
+          agent_platform: 'claude_cli',
+          created_at: '2026-05-28T00:00:00.000Z',
+          updated_at: '2026-05-28T00:00:00.000Z',
+          task: null,
+        }]
+      : [],
     selectedConvId,
     agents,
     workspaces: { 'conv-1': workspace },
@@ -436,6 +495,54 @@ describe('ChatArea mention fan-out', () => {
       mentions: [],
       messageType: 'text',
     });
+  });
+
+  it('routes single chat messages to the selected agent without requiring mentions', async () => {
+    const agents = [
+      makeAgent('agent-default', 'claude-code', 'claude_cli', { isDefault: true }),
+      makeAgent('agent-reviewer', 'reviewer', 'codex_cli'),
+    ];
+    const { workspace, dispatch } = renderChatArea({ agents, conversationType: 'single' });
+
+    fireEvent.change(screen.getByLabelText('选择单聊 Agent'), {
+      target: { value: 'agent-reviewer' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(inputPlaceholder), {
+      target: { value: '检查一下这个实现' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(mockedStartRun).toHaveBeenCalledTimes(1));
+    expect(mockedStartRun).toHaveBeenCalledWith(
+      'conv-1',
+      '检查一下这个实现',
+      'agent-reviewer',
+      'msg-1',
+      workspace,
+      dispatch,
+    );
+    expect(mockedCreateMessage).toHaveBeenCalledWith('conv-1', {
+      content: '检查一下这个实现',
+      mentions: [],
+      messageType: 'text',
+    });
+  });
+
+  it('ignores rapid duplicate sends before the sending state renders', async () => {
+    const agents = [
+      makeAgent('agent-default', 'claude-code', 'claude_cli', { isDefault: true }),
+    ];
+    renderChatArea({ agents });
+
+    fireEvent.change(screen.getByPlaceholderText(inputPlaceholder), {
+      target: { value: '@orchestrator 帮我写一个 GET /health 接口，然后写个测试' },
+    });
+    const sendButton = screen.getByRole('button', { name: 'Send' });
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+
+    await waitFor(() => expect(mockedCreateMessage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedOrchestrateConversation).toHaveBeenCalledTimes(1));
   });
 
   it('ignores unknown mentions and falls back to the default agent', async () => {
@@ -902,9 +1009,8 @@ describe('ChatArea mention fan-out', () => {
       timeline: { 'conv-1': runs },
     });
 
-    await screen.findByText('Task Plan');
-    expect(screen.getByText('Frontend')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'View Run' })).toBeTruthy();
+    await screen.findByText('协作任务计划已生成');
+    expect(screen.getByText('1 个执行阶段 · 点击在右侧查看详情')).toBeTruthy();
     expect(screen.getAllByText('frontend-agent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('button', { name: '查看产物' }).length).toBeGreaterThan(0);
   });
@@ -993,10 +1099,10 @@ describe('ChatArea mention fan-out', () => {
       activeRunIdsByConversation: { 'conv-1': ['run-b'] },
     });
 
-    await screen.findByText('Task Plan');
+    await screen.findByText('协作任务计划已生成');
 
     const userMessageNode = screen.getByText('做一个博客系统');
-    const planNode = screen.getByText('Task Plan');
+    const planNode = screen.getByText('协作任务计划已生成');
     const oldRunNode = document.getElementById('run-card-run-a');
     const latestRunNode = document.getElementById('run-card-run-b');
 
@@ -1094,7 +1200,6 @@ describe('ChatArea mention fan-out', () => {
 
     await waitFor(() => expect(mockedGetRunFileChanges).toHaveBeenCalledWith('run-diff'));
     expect(mockedGetRunFileChanges).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByText('单任务执行').length).toBeGreaterThan(0);
     expect(screen.getByText('src/login.tsx')).toBeTruthy();
   });
 
@@ -1183,7 +1288,7 @@ describe('ChatArea mention fan-out', () => {
 
     await waitFor(() => expect(mockedStartRunPreview).toHaveBeenCalledWith('run-preview-a'));
     expect(screen.getByTitle('Run preview')).toBeTruthy();
-    expect(screen.getAllByText('预览验收').length).toBeGreaterThan(0);
+    expect(screen.queryByText('预览验收')).toBeNull();
   });
 
   it('shows conversation tasks and opens task detail from a plan item', async () => {
@@ -1316,9 +1421,10 @@ describe('ChatArea mention fan-out', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
-    expect(screen.getAllByText('前端页面').length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(screen.getByRole('button', { name: '执行计划' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
+    await waitFor(() => expect(getTaskRowButtonByTitle('前端页面')).toBeTruthy());
+    fireEvent.click(getTaskRowButtonByTitle('前端页面'));
     await waitFor(() => expect(mockedGetTaskDetail).toHaveBeenCalledWith('task-1'));
     expect(screen.getAllByText('前端页面').length).toBeGreaterThan(0);
     expect(screen.getByText('最新 Run')).toBeTruthy();
@@ -1466,7 +1572,11 @@ describe('ChatArea mention fan-out', () => {
       },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '执行计划' }));
+    await waitFor(() => expect(getTaskRowButtonByTitle('可取消任务')).toBeTruthy());
+    fireEvent.click(getTaskRowButtonByTitle('可取消任务'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel Task' })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Cancel Task' }));
 
@@ -1646,7 +1756,11 @@ describe('ChatArea mention fan-out', () => {
       },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: '执行计划' }));
+    await waitFor(() => expect(getTaskRowButtonByTitle('可重跑任务')).toBeTruthy());
+    fireEvent.click(getTaskRowButtonByTitle('可重跑任务'));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Rerun Task' })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Rerun Task' }));
 
@@ -1809,7 +1923,9 @@ describe('ChatArea mention fan-out', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
     await waitFor(() => expect(screen.getByLabelText('成果面板')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'View Task' }));
+    fireEvent.click(screen.getByRole('button', { name: '执行计划' }));
+    await waitFor(() => expect(getTaskRowButtonByTitle('前端页面')).toBeTruthy());
+    fireEvent.click(getTaskRowButtonByTitle('前端页面'));
     await waitFor(() => expect(screen.getByText('最新 Run')).toBeTruthy());
 
     rerender(
@@ -1842,7 +1958,7 @@ describe('ChatArea mention fan-out', () => {
   });
 });
 
-describe('RunCard workspace mode badge', () => {
+describe('RunCard runtime metadata', () => {
   const agents = [makeAgent('agent-default', 'claude-code')];
 
   function makeRunItem(runId: string, status: ChatTimelineItem['status'] = 'completed'): ChatTimelineItem {
@@ -1868,7 +1984,7 @@ describe('RunCard workspace mode badge', () => {
     mockedGetRunCardSummary.mockResolvedValue(makeRunCardSummary({ fileChanges: [] }));
   });
 
-  it('shows worktree badge when workspace mode is git_worktree', async () => {
+  it('loads worktree metadata without exposing the workspace mode in the chat card', async () => {
     mockedGetRunCardSummary.mockResolvedValue(
       makeRunCardSummary({
         workspace: {
@@ -1887,11 +2003,15 @@ describe('RunCard workspace mode badge', () => {
       timeline: { 'conv-1': [makeRunItem('run-abc123')] },
     });
 
-    await screen.findByText(/worktree/);
+    await waitFor(() => expect(mockedGetRunCardSummary).toHaveBeenCalledWith('run-abc123'));
+    expect(screen.getByText('claude-code')).toBeTruthy();
+    expect(screen.queryByText(/worktree/)).toBeNull();
+    expect(screen.queryByText('run-abc123')).toBeNull();
+    expect(screen.queryByText('run-abc1')).toBeNull();
     expect(mockedGetRunCardSummary).toHaveBeenCalledWith('run-abc123');
   });
 
-  it('shows clone badge when workspace mode is git_clone', async () => {
+  it('loads clone metadata without exposing the workspace mode in the chat card', async () => {
     mockedGetRunCardSummary.mockResolvedValue(
       makeRunCardSummary({
         workspace: {
@@ -1910,10 +2030,13 @@ describe('RunCard workspace mode badge', () => {
       timeline: { 'conv-1': [makeRunItem('run-def456')] },
     });
 
-    await screen.findByText('clone');
+    await waitFor(() => expect(mockedGetRunCardSummary).toHaveBeenCalledWith('run-def456'));
+    expect(screen.getByText('claude-code')).toBeTruthy();
+    expect(screen.queryByText('clone')).toBeNull();
+    expect(screen.queryByText('run-def456')).toBeNull();
   });
 
-  it('shows legacy badge when workspace mode is legacy', async () => {
+  it('loads legacy metadata without exposing the workspace mode in the chat card', async () => {
     mockedGetRunCardSummary.mockResolvedValue(
       makeRunCardSummary({
         workspace: {
@@ -1932,7 +2055,10 @@ describe('RunCard workspace mode badge', () => {
       timeline: { 'conv-1': [makeRunItem('run-legacy')] },
     });
 
-    await screen.findByText('legacy');
+    await waitFor(() => expect(mockedGetRunCardSummary).toHaveBeenCalledWith('run-legacy'));
+    expect(screen.getByText('claude-code')).toBeTruthy();
+    expect(screen.queryByText('legacy')).toBeNull();
+    expect(screen.queryByText('run-legacy')).toBeNull();
   });
 
   it('does not crash when getRunWorkspace fails', async () => {
@@ -1943,9 +2069,9 @@ describe('RunCard workspace mode badge', () => {
       timeline: { 'conv-1': [makeRunItem('run-error')] },
     });
 
-    await waitFor(() => {
-      expect(screen.getByText('run-erro')).toBeTruthy();
-    });
+    await waitFor(() => expect(mockedGetRunCardSummary).toHaveBeenCalledWith('run-error'));
+    expect(screen.getByText('claude-code')).toBeTruthy();
+    expect(screen.queryByText('run-erro')).toBeNull();
     expect(screen.queryByText('worktree')).toBeNull();
     expect(screen.queryByText('clone')).toBeNull();
   });
@@ -2259,8 +2385,9 @@ describe('RunCard apply changes UI', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('run-8')).toBeTruthy();
+      expect(screen.getByText('执行中')).toBeTruthy();
     });
+    expect(screen.queryByText('run-8')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Apply Changes' })).toBeNull();
   });
 
@@ -2640,16 +2767,60 @@ describe('Acceptance — WorkspaceSetup & empty state', () => {
   it('shows WorkspaceSetup with title and placeholder when no conversation is selected', () => {
     renderChatArea({ agents, selectedConvId: null });
     expect(screen.getByText('开始协作')).toBeTruthy();
-    expect(screen.getByPlaceholderText('/Users/me/myproject')).toBeTruthy();
-    expect(screen.getByText(/Web 版本需手动粘贴绝对路径/)).toBeTruthy();
+    expect(screen.getByText('单聊')).toBeTruthy();
+    expect(screen.getByText('群聊')).toBeTruthy();
+    expect(screen.getByPlaceholderText('粘贴项目绝对路径，如 /Users/me/myproject')).toBeTruthy();
+    expect(screen.queryByText(/Web 版本需手动粘贴绝对路径/)).toBeNull();
     expect(screen.getByRole('button', { name: '创建协作会话' })).toBeTruthy();
+  });
+
+  it('uses agent choice cards instead of a native select for single chat setup', () => {
+    renderChatArea({
+      agents: [
+        makeAgent('agent-builder', 'builder', 'claude_cli', { isDefault: true }),
+        makeAgent('agent-tester', 'tester'),
+        makeAgent('agent-reviewer', 'reviewer'),
+      ],
+      selectedConvId: null,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /单聊/ }));
+
+    expect(screen.getByText('单聊对象')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /builder/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: /tester/ }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('负责实现功能、修改代码和整理基础工程结构。')).toBeTruthy();
+    expect(screen.getByText('负责补充测试、验证行为和发现回归风险。')).toBeTruthy();
+    expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
+  it('shows available agents before entering a group conversation', () => {
+    renderChatArea({
+      agents: [
+        makeAgent('agent-builder', 'builder', 'claude_cli', { isDefault: true }),
+        makeAgent('agent-tester', 'tester'),
+        makeAgent('agent-reviewer', 'reviewer'),
+        makeAgent('agent-design', 'designer'),
+      ],
+      selectedConvId: null,
+    });
+
+    expect(screen.getByRole('button', { name: '配置 Agents' })).toBeTruthy();
+    expect(screen.getByText('群聊成员')).toBeTruthy();
+    expect(screen.getByText('4 个可用')).toBeTruthy();
+    expect(screen.getByTestId('agent-picker-list').getAttribute('class')).toContain('max-h-[260px]');
+    expect(screen.getByTestId('agent-picker-list').getAttribute('class')).toContain('overflow-y-auto');
+    expect(screen.getByRole('button', { name: /builder/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /tester/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /reviewer/ })).toBeTruthy();
+    expect(screen.getByText('负责代码审查、风险判断和改进建议。')).toBeTruthy();
   });
 
   it('shows Chinese guidance and demo prompts when conversation has no content', () => {
     renderChatArea({ agents, selectedConvId: 'conv-1' });
-    expect(screen.getByPlaceholderText(/default @claude-code, @orchestrator/i)).toBeTruthy();
+    expect(screen.getByPlaceholderText(/@orchestrator/)).toBeTruthy();
     expect(screen.getByText('让 Orchestrator 检查项目结构')).toBeTruthy();
-    expect(screen.getByText('创建一个前端任务')).toBeTruthy();
+    expect(screen.getByText('指定 builder 干活')).toBeTruthy();
     expect(screen.getByText('为最近改动补充测试')).toBeTruthy();
   });
 
@@ -2663,7 +2834,7 @@ describe('Acceptance — WorkspaceSetup & empty state', () => {
 
   it('auto-validates on input with debounce and shows badges + create button', async () => {
     renderChatArea({ agents, selectedConvId: null });
-    const input = screen.getByPlaceholderText('/Users/me/myproject');
+    const input = screen.getByPlaceholderText('粘贴项目绝对路径，如 /Users/me/myproject');
     fireEvent.change(input, { target: { value: '/Users/test/project' } });
 
     await screen.findByText('✓ git');

@@ -6,7 +6,6 @@ import { useApp } from '../../store/useApp';
 import { loadConversationRuntime, startRun } from '../../store/runtimeActions';
 import { api, ApiError } from '../../services/api';
 import { socketService } from '../../services/socket';
-import { OrchestratorPlanningCard, PlanCard } from '../PlanCard';
 import { RunCard } from '../RunCard';
 import { ConflictReviewCard } from '../ConflictReviewCard';
 import { TaskDetailDrawer } from '../TaskPanel';
@@ -63,6 +62,26 @@ function stripOrchestratorMention(input: string) {
   return input.replace(/@orchestrator\b/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function singleAgentStorageKey(conversationId: string) {
+  return `agenthub.singleAgent.${conversationId}`;
+}
+
+function readSingleAgentId(conversationId: string) {
+  try {
+    return localStorage.getItem(singleAgentStorageKey(conversationId));
+  } catch {
+    return null;
+  }
+}
+
+function writeSingleAgentId(conversationId: string, agentId: string) {
+  try {
+    localStorage.setItem(singleAgentStorageKey(conversationId), agentId);
+  } catch {
+    // Local storage is only a UI preference; sending can continue without it.
+  }
+}
+
 function formatWorkspaceBlockedError(error: ApiError) {
   const status = error.workspaceStatus;
   if (!status || status.state !== 'dirty') {
@@ -95,6 +114,8 @@ export function ChatArea() {
   const [taskActionError, setTaskActionError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const previousConvIdRef = useRef<string | null>(null);
+  const sendLockRef = useRef(false);
+  const recentSendRef = useRef<{ key: string; at: number } | null>(null);
 
   const convId = state.selectedConvId;
   const timeline = useMemo(() => (convId ? state.timeline[convId] ?? [] : []), [convId, state.timeline]);
@@ -106,6 +127,20 @@ export function ChatArea() {
   const defaultAgentId = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.id ?? state.agents.find((agent) => agent.enabled && agent.adapter_type === 'claude_cli')?.id, [state.agents]);
   const defaultAgentSlug = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.slug ?? null, [state.agents]);
   const runtimeUnavailable = useMemo(() => state.agents.some((agent) => agent.enabled && agent.status === 'unavailable'), [state.agents]);
+  const currentConversation = useMemo(() => state.conversations.find((conversation) => conversation.id === convId) ?? null, [convId, state.conversations]);
+  const conversationType = currentConversation?.type ?? 'group';
+  const [singleAgentId, setSingleAgentId] = useState<string | null>(null);
+  const singleAgent = useMemo(
+    () => state.agents.find((agent) => agent.enabled && agent.id === singleAgentId) ?? state.agents.find((agent) => agent.enabled && agent.id === defaultAgentId) ?? state.agents.find((agent) => agent.enabled) ?? null,
+    [defaultAgentId, singleAgentId, state.agents],
+  );
+
+  useEffect(() => {
+    if (!convId || conversationType !== 'single') return;
+    const stored = readSingleAgentId(convId);
+    const fallback = stored ?? defaultAgentId ?? state.agents.find((agent) => agent.enabled)?.id ?? null;
+    setSingleAgentId(fallback);
+  }, [convId, conversationType, defaultAgentId, state.agents]);
 
   async function loadTasksPanelData(conversationId: string) {
     setLoadingTasks(true);
@@ -262,10 +297,25 @@ export function ChatArea() {
   async function handleSend() {
     if (!input.trim() || !convId || sending) return;
     const rawPrompt = input.trim();
+    const sendKey = `${convId}:${rawPrompt}`;
+    const now = Date.now();
+    if (sendLockRef.current) return;
+    if (recentSendRef.current?.key === sendKey && now - recentSendRef.current.at < 5000) return;
+    sendLockRef.current = true;
+    recentSendRef.current = { key: sendKey, at: now };
     setInput('');
     setSending(true);
     try {
-      if (hasOrchestratorMention(rawPrompt)) {
+      if (conversationType === 'single') {
+        const agentId = singleAgent?.id ?? defaultAgentId;
+        if (!agentId) {
+          dispatch({ type: 'SET_ERROR', payload: '没有可用的 Agent' });
+          return;
+        }
+        const userMessage = await api.createMessage(convId, { content: rawPrompt, mentions: [], messageType: 'text' });
+        dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
+        await startRun(convId, rawPrompt, agentId, userMessage.id, workspace, dispatch);
+      } else if (hasOrchestratorMention(rawPrompt)) {
         const prompt = stripOrchestratorMention(rawPrompt) || rawPrompt.replace(/@orchestrator\b/gi, '').trim();
         const parsed = parseMentions(rawPrompt, state.agents);
         const userMessage = await api.createMessage(convId, { content: rawPrompt, mentions: parsed.mentions, messageType: 'command' });
@@ -327,7 +377,9 @@ export function ChatArea() {
       } else {
         dispatch({ type: 'SET_ERROR', payload: e instanceof Error ? e.message : '启动运行失败' });
       }
+      recentSendRef.current = null;
     } finally {
+      sendLockRef.current = false;
       setSending(false);
     }
   }
@@ -352,7 +404,7 @@ export function ChatArea() {
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[var(--app-bg)]">
       <div
         className="flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
-        style={{ paddingRight: showArtifactPanel ? artifactPanelWidth + 32 : 0 }}
+        style={{ paddingRight: showArtifactPanel ? artifactPanelWidth : 0 }}
       >
         <TopBar onOpenArtifacts={openArtifacts} />
         <div className="flex-1 overflow-y-auto px-8 py-5">
@@ -366,17 +418,36 @@ export function ChatArea() {
                 <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--color-accent)', borderTopColor: 'transparent' }} />
               </div>
             ) : feedEntries.length === 0 ? (
-              <ChatEmptyState onFillPrompt={setInput} agents={state.agents} />
+              <ChatEmptyState
+                onFillPrompt={setInput}
+                agents={state.agents}
+                conversationType={conversationType}
+                singleAgentName={singleAgent?.name ?? null}
+              />
             ) : (
               feedEntries.map((entry) => (
                 entry.kind === 'message'
                   ? <MessageCard key={entry.key} message={entry.message} agents={state.agents} />
                   : entry.kind === 'plan'
-                    ? <PlanCard key={entry.key} plan={entry.plan} onOpenTask={openTask} onResumeFrom={handleResumePlanFrom} onFocusArtifacts={(runId, tab) => openArtifacts(tab, runId)} />
+                    ? (
+                      <div key={entry.key} className="flex w-full justify-start mb-2">
+                        <div
+                          onClick={() => openArtifacts('tasks')}
+                          className="cursor-pointer flex items-center gap-3 px-4 py-3 rounded-xl transition-all hover:-translate-y-0.5"
+                          style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', boxShadow: '0 2px 4px rgba(37,99,235,0.05)' }}
+                        >
+                          <span className="text-lg">📋</span>
+                          <div>
+                            <div className="text-sm font-semibold" style={{ color: '#1D4ED8' }}>协作任务计划已生成</div>
+                            <div className="text-xs" style={{ color: '#3B82F6' }}>{entry.plan.items.length} 个执行阶段 · 点击在右侧查看详情</div>
+                          </div>
+                        </div>
+                      </div>
+                    )
                     : <RunCard key={entry.key} item={entry.item} isActive={activeRunIds.includes(entry.item.runId)} onInterrupt={() => socketService.interruptRun(entry.item.runId)} onFocusArtifacts={(runId, tab) => openArtifacts(tab, runId)} />
               ))
             )}
-            {planning ? <OrchestratorPlanningCard planning={planning} /> : null}
+            {planning ? <SystemMessageIndicator text="@orchestrator 正在分析需求并生成 DAG 任务链..." /> : null}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -398,6 +469,12 @@ export function ChatArea() {
               agents={state.agents}
               runtimeUnavailable={runtimeUnavailable}
               defaultAgentSlug={defaultAgentSlug}
+              conversationType={conversationType}
+              singleAgentId={singleAgent?.id ?? null}
+              onSingleAgentChange={(agentId) => {
+                setSingleAgentId(agentId);
+                if (convId) writeSingleAgentId(convId, agentId);
+              }}
               showDemoChips={feedEntries.length > 0}
             />
           </div>
@@ -472,6 +549,9 @@ function ChatInputArea({
   agents,
   runtimeUnavailable,
   defaultAgentSlug,
+  conversationType,
+  singleAgentId,
+  onSingleAgentChange,
   showDemoChips,
 }: {
   input: string;
@@ -483,21 +563,30 @@ function ChatInputArea({
   agents: Agent[];
   runtimeUnavailable: boolean;
   defaultAgentSlug: string | null;
+  conversationType: 'single' | 'group';
+  singleAgentId: string | null;
+  onSingleAgentChange: (agentId: string) => void;
   showDemoChips: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [selectedMention, setSelectedMention] = useState(0);
-  const demoPrompts = [
-    '让 Orchestrator 检查项目结构',
-    '创建一个前端任务',
-    '为最近改动补充测试',
-  ];
-  const demoPromptMap: Record<string, string> = {
-    '让 Orchestrator 检查项目结构': '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务',
-    '创建一个前端任务': '@frontend-agent 请创建或优化一个简单的首页界面',
-    '为最近改动补充测试': '@tester-agent 请为最近的功能改动补充或完善测试',
-  };
+  const enabledAgents = agents.filter((agent) => agent.enabled);
+  const selectedSingleAgent = enabledAgents.find((agent) => agent.id === singleAgentId) ?? enabledAgents[0] ?? null;
+  const demoPrompts = conversationType === 'single'
+    ? ['检查项目结构', '实现一个小功能', '为最近改动补充测试']
+    : ['让 Orchestrator 检查项目结构', '指定 builder 干活', '为最近改动补充测试'];
+  const demoPromptMap: Record<string, string> = conversationType === 'single'
+    ? {
+        '检查项目结构': '请检查当前项目结构，并建议下一步可以实现的任务',
+        '实现一个小功能': '请实现一个小功能，并说明改动位置',
+        '为最近改动补充测试': '请为最近的功能改动补充或完善测试',
+      }
+    : {
+        '让 Orchestrator 检查项目结构': '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务',
+        '指定 builder 干活': '@builder 请实现一个小功能，并说明改动位置',
+        '为最近改动补充测试': '@tester 请为最近的功能改动补充或完善测试',
+      };
 
   useEffect(() => {
     const node = textareaRef.current;
@@ -507,18 +596,19 @@ function ChatInputArea({
   }, [input]);
 
   const mentionQuery = useMemo(() => {
+    if (conversationType !== 'group') return null;
     const match = input.match(/@([a-zA-Z0-9_-]*)$/);
     return match ? match[1].toLowerCase() : null;
-  }, [input]);
+  }, [conversationType, input]);
 
   const mentionAgents = useMemo(() => {
     const base = [
       { id: 'orchestrator', name: 'Orchestrator', slug: 'orchestrator', enabled: true, status: 'active' as const },
-      ...agents,
+      ...enabledAgents,
     ];
     if (mentionQuery === null) return [];
     return base.filter((agent) => agent.slug.toLowerCase().includes(mentionQuery) || agent.name.toLowerCase().includes(mentionQuery));
-  }, [agents, mentionQuery]);
+  }, [enabledAgents, mentionQuery]);
 
   useEffect(() => {
     setMentionOpen(mentionQuery !== null && mentionAgents.length > 0);
@@ -577,6 +667,34 @@ function ChatInputArea({
         </div>
       )}
       <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Badge variant={conversationType === 'single' ? 'muted' : 'running'}>
+            {conversationType === 'single' ? '单聊' : '群聊'}
+          </Badge>
+          {conversationType === 'single' ? (
+            <select
+              value={selectedSingleAgent?.id ?? ''}
+              onChange={(event) => onSingleAgentChange(event.target.value)}
+              className="rounded-md px-2 py-1 text-xs outline-none"
+              style={{
+                backgroundColor: 'var(--card-subtle)',
+                color: 'var(--app-text)',
+                border: '0.5px solid var(--app-border)',
+              }}
+              aria-label="选择单聊 Agent"
+            >
+              {enabledAgents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+              @成员指派，@orchestrator 自动拆解
+            </span>
+          )}
+        </div>
         {mentionTokens.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {mentionTokens.map((slug) => (
@@ -592,7 +710,11 @@ function ChatInputArea({
             value={input}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder={defaultAgentSlug ? `Ask agents to build, fix, review, or preview... (default @${defaultAgentSlug}, @orchestrator)` : 'Ask agents to build, fix, review, or preview... (@agent-name, @orchestrator)'}
+            placeholder={conversationType === 'single'
+              ? `和 ${selectedSingleAgent?.name ?? 'Agent'} 单聊：直接描述任务，不需要 @`
+              : defaultAgentSlug
+                ? `群聊：@builder/@tester 指派，或 @orchestrator 自动拆解（默认 @${defaultAgentSlug}）`
+                : '群聊：@agent-name 指派，或 @orchestrator 自动拆解'}
             rows={1}
             className="w-full resize-none bg-transparent pr-20 text-sm outline-none"
             style={{ color: 'var(--app-text)', maxHeight: '112px', minHeight: '24px', overflowY: 'auto' }}
@@ -637,9 +759,23 @@ function ChatInputArea({
   );
 }
 
+function SystemMessageIndicator({ text }: { text: string }) {
+  return (
+    <div className="my-4 flex items-center justify-center gap-3">
+      <div className="h-px flex-1 max-w-[40px]" style={{ backgroundColor: 'var(--app-border)' }} />
+      <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>{text}</span>
+      <div className="h-px flex-1 max-w-[40px]" style={{ backgroundColor: 'var(--app-border)' }} />
+    </div>
+  );
+}
+
 function MessageCard({ message, agents }: { message: Message; agents: Agent[] }) {
   const isUser = message.sender_type === 'user';
-  const title = message.sender_type === 'orchestrator' ? 'Orchestrator' : message.sender_type === 'system' ? 'System' : message.sender_type === 'agent' ? message.sender_id ?? 'Agent' : null;
+  const agent = agents.find((item) => item.id === message.sender_id);
+  const title = message.sender_type === 'orchestrator' ? 'Orchestrator'
+    : message.sender_type === 'system' ? 'System'
+    : agent ? agent.name
+    : 'Agent';
   const avatarLabel = (title ?? 'A').trim().charAt(0).toUpperCase();
   const time = useMemo(() => {
     try {
@@ -662,6 +798,10 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
     }
     return result;
   }, [agents, message.content, message.mentions]);
+
+  if (message.sender_type === 'system') {
+    return <SystemMessageIndicator text={message.content} />;
+  }
 
   if (message.message_type === 'conflict_review') {
     return <ConflictReviewCard message={message} title={title} time={time} avatarLabel={avatarLabel} />;
@@ -726,35 +866,50 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
   );
 }
 
-const demoPrompts = [
-  { title: '让 Orchestrator 检查项目结构', text: '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务' },
-  { title: '创建一个前端任务', text: '@frontend-agent 请创建或优化一个简单的首页界面' },
-  { title: '为最近改动补充测试', text: '@tester-agent 请为最近的功能改动补充或完善测试' },
-];
-
 function ChatEmptyState({
   onFillPrompt,
   agents,
+  conversationType,
+  singleAgentName,
 }: {
   onFillPrompt: (text: string) => void;
   agents: Agent[];
+  conversationType: 'single' | 'group';
+  singleAgentName: string | null;
 }) {
   const defaultSlug = agents.find((a) => a.is_default)?.slug ?? null;
+  const prompts = conversationType === 'single'
+    ? [
+        { title: `和 ${singleAgentName ?? 'Agent'} 检查项目结构`, text: '请检查当前项目结构，并建议下一步可以实现的任务' },
+        { title: '实现一个小功能', text: '请实现一个小功能，并说明改动位置' },
+        { title: '为最近改动补充测试', text: '请为最近的功能改动补充或完善测试' },
+      ]
+    : [
+        { title: '让 Orchestrator 检查项目结构', text: '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务' },
+        { title: '指定 builder 干活', text: '@builder 请实现一个小功能，并说明改动位置' },
+        { title: '为最近改动补充测试', text: '@tester 请为最近的功能改动补充或完善测试' },
+      ];
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-4">
       <div className="max-w-md space-y-6">
         <div className="space-y-3 text-left">
           <GuidanceStep index={1}>
-            直接指定 Agent：
+            {conversationType === 'single' ? '单聊当前 Agent：' : '在群聊里指定成员：'}
             <InlineCode>
-              @{defaultSlug ?? 'agent-name'} 帮我实现一个登录页
+              {conversationType === 'single' ? '帮我实现一个登录页' : `@${defaultSlug ?? 'agent-name'} 帮我实现一个登录页`}
             </InlineCode>
           </GuidanceStep>
           <GuidanceStep index={2}>
-            让 Orchestrator 拆任务：
-            <InlineCode>
-              @orchestrator 帮我实现登录页和登录接口
-            </InlineCode>
+            {conversationType === 'single' ? (
+              '需要多人协作时，创建群聊会话再 @成员或 @orchestrator'
+            ) : (
+              <>
+                让 Orchestrator 拆任务：
+                <InlineCode>
+                  @orchestrator 帮我实现登录页和登录接口
+                </InlineCode>
+              </>
+            )}
           </GuidanceStep>
           <GuidanceStep index={3}>
             Run 完成后可以查看 Diff、启动 Preview、确认 Apply，并清理临时工作区
@@ -762,7 +917,7 @@ function ChatEmptyState({
         </div>
         <div className="space-y-2">
           <p className="text-xs" style={{ color: '#484F58' }}>快速开始</p>
-          {demoPrompts.map((prompt) => (
+          {prompts.map((prompt) => (
             <button
             key={prompt.title}
             type="button"

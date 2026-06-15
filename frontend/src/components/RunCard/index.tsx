@@ -127,7 +127,6 @@ export function RunCard({
   const showNoChangesState = canShowActions && !hasFileChanges && !isApplied && !isCleaned && !isAutoMergeRun;
   const hasPendingProjectChanges = hasActionBar && conflictFiles.length === 0;
   const showAutoMergeState = canShowActions && isAutoMergeRun && !isCleaned;
-  const runSummaryLabel = item.prompt.trim() || item.runId.slice(0, 8);
   const appliedFilesCount = changeApp?.appliedFiles.length ?? fileChanges.length;
   const canCollapse = item.status === 'completed' || running;
   const showCollapsedSummary = canCollapse && !detailsExpanded;
@@ -154,6 +153,11 @@ export function RunCard({
       setLoadingDetail(false);
     }
   }
+
+  useEffect(() => {
+    if (!detailsExpanded || !canLoadDetail || detailError) return;
+    void handleLoadDetail();
+  }, [canLoadDetail, detailError, detailsExpanded, item.runId]);
 
   async function requestChangeApproval(requestApproval: () => Promise<ApprovalRequestType>) {
     if (checkingApply || isApplied) return;
@@ -230,15 +234,14 @@ export function RunCard({
     }
   }
 
+  const visibleBlocks = item.blocks.filter((block) => block.kind !== 'tool_call' && block.kind !== 'file_change_indicator');
+
   return (
-    <div ref={cardRef} id={`run-card-${item.runId}`} className="agenthub-card space-y-4 p-5">
+    <div ref={cardRef} id={`run-card-${item.runId}`} className="agenthub-card space-y-3 p-4">
       <RunHeader
         item={item}
-        runWorkspace={runWorkspace}
-        toolCount={toolBlocks.length}
         isActive={isActive}
         onInterrupt={onInterrupt}
-        summaryLabel={runSummaryLabel}
         fileCount={appliedFilesCount}
         detailsExpanded={detailsExpanded}
         canCollapse={canCollapse}
@@ -248,7 +251,6 @@ export function RunCard({
       {showCollapsedSummary ? (
         <RunCollapsedSummary
           item={item}
-          summaryLabel={runSummaryLabel}
           fileCount={appliedFilesCount}
         />
       ) : (
@@ -258,20 +260,25 @@ export function RunCard({
             {running ? (
               <RunningSummary toolCount={toolBlocks.length} />
             ) : toolBlocks.length > 0 ? (
-              <RunTimeline blocks={toolBlocks} autoExpand={hasFailedTool} workspaceRootPath={runWorkspace?.rootPath ?? null} />
-            ) : canLoadDetail ? (
+              <RunTimeline blocks={toolBlocks} autoExpand={hasFailedTool} workspaceRootPath={runWorkspace?.rootPath ?? null} onFocusArtifacts={onFocusArtifacts ? () => onFocusArtifacts(item.runId, 'diff') : undefined} />
+            ) : canLoadDetail && loadingDetail ? (
+              <div
+                className="rounded-lg px-3 py-2 text-sm"
+                style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}
+              >
+                正在加载 {eventCount} 条执行记录...
+              </div>
+            ) : canLoadDetail && detailError ? (
               <button
                 type="button"
                 onClick={() => void handleLoadDetail()}
-                disabled={loadingDetail}
                 className="rounded-lg px-3 py-2 text-sm font-medium"
-                style={secondaryButton(loadingDetail)}
+                style={secondaryButton(false)}
               >
-                {loadingDetail ? `正在加载 ${eventCount} 条执行记录...` : `加载 ${eventCount} 条执行记录`}
+                重新加载执行记录
               </button>
             ) : null}
-            {item.blocks
-              .filter((block) => block.kind !== 'tool_call')
+            {visibleBlocks
               .map((block) => (
                 <TimelineBlockView key={block.id} block={block} workspaceRootPath={runWorkspace?.rootPath ?? null} />
               ))}
@@ -359,22 +366,16 @@ export function RunCard({
 
 function RunHeader({
   item,
-  runWorkspace,
-  toolCount,
   isActive,
   onInterrupt,
-  summaryLabel,
   fileCount,
   detailsExpanded,
   canCollapse,
   onToggleDetails,
 }: {
   item: ChatTimelineItem;
-  runWorkspace: RunWorkspace | null;
-  toolCount: number;
   isActive: boolean;
   onInterrupt: () => void;
-  summaryLabel: string;
   fileCount: number;
   detailsExpanded: boolean;
   canCollapse: boolean;
@@ -387,67 +388,48 @@ function RunHeader({
     return `${seconds}s`;
   }, [item.finishedAt, item.startedAt]);
 
-  const workspaceModeLabel = runWorkspace?.mode === 'git_worktree'
-    ? 'worktree'
-    : runWorkspace?.mode === 'git_clone'
-      ? 'clone'
-      : runWorkspace?.mode === 'copy'
-        ? 'copy (legacy)'
-      : 'legacy';
-
   return (
-    <div className="flex items-start gap-3">
+    <div className="flex items-center gap-3">
       <div
-        className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold"
+        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold"
         style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
       >
         {(item.agentName ?? 'A').slice(0, 1).toUpperCase()}
       </div>
-      <div className="flex-1 space-y-2">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>
               {item.agentName ?? item.agentId}
             </span>
             <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
-            <span className="font-mono text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              {item.runId.slice(0, 8)}
-            </span>
-            {runWorkspace && <Badge variant={runWorkspace.status === 'cleaned' ? 'cleaned' : 'muted'}>{runWorkspace.status === 'cleaned' ? '已清理' : workspaceModeLabel}</Badge>}
-            {runWorkspace?.status === 'cleaned' && <span className="hidden">cleaned</span>}
-            <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              {toolCount} tools
-            </span>
-            <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              {duration}
-            </span>
           </div>
-          <div className="flex items-center gap-2">
-            {canCollapse && (
-              <button
-                type="button"
-                onClick={onToggleDetails}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium"
-                style={secondaryButton(false)}
-              >
-                {detailsExpanded ? '收起' : '展开'}
-              </button>
-            )}
-            {isActive && (
-              <button
-                type="button"
-                onClick={onInterrupt}
-                className="rounded-lg px-3 py-1.5 text-xs font-medium"
-                style={{ backgroundColor: '#FEF2F2', color: '#991B1B', border: '0.5px solid #FECACA' }}
-              >
-                中断
-              </button>
-            )}
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+            {fileCount > 0 && <span>{fileCount} files</span>}
+            <span>{duration}</span>
           </div>
         </div>
-        <div className="text-xs truncate" style={{ color: 'var(--app-text-secondary)' }}>
-          {summaryLabel}
-          {item.status === 'completed' ? ` · ${fileCount} files` : ''}
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {canCollapse && (
+            <button
+              type="button"
+              onClick={onToggleDetails}
+              className="rounded-md px-2.5 py-1 text-xs font-medium"
+              style={secondaryButton(false)}
+            >
+              {detailsExpanded ? '收起' : '展开'}
+            </button>
+          )}
+          {isActive && (
+            <button
+              type="button"
+              onClick={onInterrupt}
+              className="rounded-lg px-3 py-1.5 text-xs font-medium"
+              style={{ backgroundColor: '#FEF2F2', color: '#991B1B', border: '0.5px solid #FECACA' }}
+            >
+              中断
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -458,47 +440,71 @@ function RunTimeline({
   blocks,
   autoExpand,
   workspaceRootPath,
+  onFocusArtifacts,
 }: {
   blocks: ToolCallBlock[];
   autoExpand: boolean;
   workspaceRootPath: string | null;
+  onFocusArtifacts?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const failedCount = blocks.filter((block) => block.status === 'error').length;
-  const completedCount = blocks.filter((block) => block.status === 'completed').length;
-  const runningCount = blocks.filter((block) => block.status === 'running').length;
+  const toolBlocks = blocks.filter((block) => block.kind === 'tool_call');
+  const runningBlocks = toolBlocks.filter((block) => block.status === 'running');
+  const completedBlocks = toolBlocks.filter((block) => block.status === 'completed');
+  const errorBlocks = toolBlocks.filter((block) => block.status === 'error');
+
+  const MAX_VISIBLE = 5;
+  const visibleCompleted = completedBlocks.slice(-MAX_VISIBLE);
+  const hiddenCompletedCount = completedBlocks.length - visibleCompleted.length;
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left"
-        onClick={() => setExpanded((value) => !value)}
-        style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)' }}
-      >
-        <div className="min-w-0">
-          <div className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>
-            工具调用
-          </div>
-          <div className="mt-1 text-xs" style={{ color: failedCount > 0 ? 'var(--status-danger)' : 'var(--app-text-secondary)' }}>
-            {blocks.length} 条
-            {completedCount > 0 ? ` · ${completedCount} 已完成` : ''}
-            {runningCount > 0 ? ` · ${runningCount} 执行中` : ''}
-            {failedCount > 0 ? ` · ${failedCount} 失败` : ''}
-          </div>
-        </div>
-        <span className="text-xs font-medium" style={{ color: 'var(--app-accent)' }}>
-          {expanded ? '收起' : '展开'}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="space-y-2">
-          {blocks.map((block) => (
-            <ToolTimelineRow key={block.id} block={block} expanded={autoExpand && block.status === 'error'} workspaceRootPath={workspaceRootPath} />
-          ))}
+    <div className="space-y-3">
+      {hiddenCompletedCount > 0 && (
+        <div
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono"
+          style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)', border: '1px dashed var(--app-border)' }}
+        >
+          📦 {hiddenCompletedCount} 历史动作
         </div>
       )}
+
+      <div className="flex flex-wrap gap-2">
+        {visibleCompleted.map((block) => (
+          <ToolChip key={block.id} block={block} workspaceRootPath={workspaceRootPath} />
+        ))}
+        {errorBlocks.map((block) => (
+          <ToolChip key={block.id} block={block} workspaceRootPath={workspaceRootPath} isError onClick={onFocusArtifacts} />
+        ))}
+      </div>
+
+      {runningBlocks.length > 0 && (
+        <div className="flex items-center gap-3 px-3 py-2 rounded-md overflow-hidden" style={{ backgroundColor: '#1E1E1E' }}>
+          <div className="h-3 w-3 rounded-full border-2 border-t-[#3B82F6] animate-spin flex-shrink-0" style={{ borderColor: '#4B5563' }} />
+          <div className="font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis flex-1 relative pr-3" style={{ color: '#A3BE8C' }}>
+            &gt; {runningBlocks[0].toolName} {formatRelativePath(runningBlocks[0].inputPreview || '', workspaceRootPath)}
+            <span className="animate-pulse ml-1 inline-block" style={{ color: '#E5E9F0' }}>▋</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolChip({ block, workspaceRootPath, isError = false, onClick }: { block: ToolCallBlock; workspaceRootPath: string | null; isError?: boolean; onClick?: () => void }) {
+  const preview = formatRelativePath(block.inputPreview || block.toolName, workspaceRootPath);
+
+  return (
+    <div
+      onClick={isError ? onClick : undefined}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono transition-transform hover:-translate-y-[1px] ${isError ? 'cursor-pointer' : 'cursor-default'}`}
+      style={isError ? {
+        backgroundColor: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA', boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.1)'
+      } : {
+        backgroundColor: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0'
+      }}
+    >
+      <span>{isError ? '✗' : '✓'}</span>
+      <span className="font-semibold">{block.toolName}</span>
+      <span className="opacity-70 max-w-[120px] truncate">{preview}</span>
     </div>
   );
 }
@@ -581,69 +587,67 @@ function RunningSummary({ toolCount }: { toolCount: number }) {
 
 function RunCollapsedSummary({
   item,
-  summaryLabel,
   fileCount,
 }: {
   item: ChatTimelineItem;
-  summaryLabel: string;
   fileCount: number;
 }) {
+  const isCompleted = item.status === 'completed';
+
   return (
-    <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)', color: 'var(--app-text)' }}>
-      {item.status === 'completed'
-        ? `${item.agentName ?? item.agentId} 完成了「${summaryLabel}」 · ${fileCount} files`
-        : `${item.agentName ?? item.agentId} 正在处理「${summaryLabel}」`}
+    <div className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)', color: 'var(--app-text)' }}>
+      <Badge variant={isCompleted ? 'completed' : 'running'}>
+        {isCompleted ? '已完成' : '运行中'}
+      </Badge>
+      {isCompleted && (
+        <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+          {fileCount} files
+        </span>
+      )}
+      <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
+        展开查看执行详情
+      </span>
     </div>
   );
 }
 
-function ToolTimelineRow({ block, expanded, workspaceRootPath }: { block: ToolCallBlock; expanded: boolean; workspaceRootPath: string | null }) {
-  const [open, setOpen] = useState(expanded);
+function ToolTimelineRow({ block, expanded: _expanded, workspaceRootPath }: { block: ToolCallBlock; expanded: boolean; workspaceRootPath: string | null }) {
   const pill = formatRelativePath(block.inputPreview || block.toolName, workspaceRootPath);
-
-  useEffect(() => {
-    if (expanded) {
-      setOpen(true);
-    }
-  }, [expanded]);
+  const detailText = formatToolOutput(block.resultContent ?? block.partialJson, workspaceRootPath);
+  const summaryText = getToolSummary(block.summary, detailText);
 
   return (
-    <div className="rounded-lg border px-3 py-3" style={{ borderColor: 'var(--app-border)', backgroundColor: 'var(--card-subtle)' }}>
-      <button type="button" className="flex w-full items-start justify-between gap-3 text-left" onClick={() => setOpen((value) => !value)}>
+    <div
+      className="rounded-md px-2 py-2"
+      style={{ backgroundColor: block.status === 'error' ? 'rgba(220, 38, 38, 0.035)' : 'transparent' }}
+    >
+      <div className="flex w-full items-start justify-between gap-3 text-left">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 text-sm" style={{ color: block.status === 'error' ? 'var(--status-danger)' : block.status === 'running' ? 'var(--status-running)' : 'var(--status-success)' }}>
-            {block.status === 'error' ? '✕' : block.status === 'running' ? '◌' : '✓'}
+          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: block.status === 'error' ? 'var(--status-danger)' : block.status === 'running' ? 'var(--status-running)' : 'var(--status-success)' }}>
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>
+              <span className="text-xs font-medium" style={{ color: 'var(--app-text)' }}>
                 {block.toolName}
               </span>
               <code
-                className="rounded-full px-2 py-0.5 text-[11px]"
-                style={{ backgroundColor: 'var(--card-bg)', color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}
+                className="rounded px-1.5 py-0.5 text-[11px]"
+                style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}
               >
                 {pill}
               </code>
             </div>
-            {block.summary && (
+            {summaryText && (
               <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {block.summary}
+                {summaryText}
               </div>
             )}
           </div>
         </div>
-        <Badge variant={block.status === 'error' ? 'failed' : block.status === 'running' ? 'running' : 'completed'}>
-          {block.status === 'error' ? 'failed' : block.status}
-        </Badge>
-      </button>
-      {open && (block.resultContent || block.partialJson) && (
-        <div className="mt-3 rounded-lg px-3 py-3 text-xs" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}>
-          <pre className="whitespace-pre-wrap break-all font-mono" style={{ margin: 0, color: 'var(--app-text-secondary)' }}>
-            {truncateContent(formatToolOutput(block.resultContent ?? block.partialJson, workspaceRootPath), 40)}
-          </pre>
-        </div>
-      )}
+        <span className="text-[11px]" style={{ color: 'var(--app-text-secondary)' }}>
+          {block.status === 'error' ? '失败' : block.status === 'running' ? '执行中' : '完成'}
+        </span>
+      </div>
     </div>
   );
 }
@@ -730,8 +734,8 @@ function ConflictPanel({ applyCheck, workspaceRootPath }: { applyCheck: ApplyChe
 function TimelineBlockView({ block, workspaceRootPath }: { block: TimelineBlock; workspaceRootPath: string | null }) {
   if (block.kind === 'agent_text') {
     return (
-      <div className="px-1 py-1">
-        <div className="markdown-body text-sm">
+      <div className="rounded-md border-l-2 px-3 py-2" style={{ borderColor: 'var(--app-border)', backgroundColor: 'transparent' }}>
+        <div className="markdown-body text-sm leading-6">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdownTables(block.content)}</ReactMarkdown>
         </div>
       </div>
@@ -752,11 +756,7 @@ function TimelineBlockView({ block, workspaceRootPath }: { block: TimelineBlock;
   }
 
   if (block.kind === 'file_change_indicator') {
-    return (
-      <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#EFF8FF', border: '0.5px solid #BFDBFE', color: 'var(--app-text)' }}>
-        {block.changeType === 'create' ? '新增' : '修改'} {formatRelativePath(block.filePath, workspaceRootPath)}
-      </div>
-    );
+    return null;
   }
 
   return null;
@@ -794,12 +794,16 @@ function secondaryAccentButton(disabled: boolean) {
   };
 }
 
-function truncateContent(content: string, maxLines: number) {
-  const lines = content.split('\n');
-  if (lines.length <= maxLines) return content;
-  return `${lines.slice(0, maxLines).join('\n')}\n...`;
+function getToolSummary(summary: string | null | undefined, detail: string) {
+  const cleanSummary = summary?.trim() ?? '';
+  const cleanDetail = detail.trim();
+  if (!cleanSummary) return cleanDetail.split('\n').find(Boolean)?.slice(0, 160) ?? '';
+  return cleanSummary;
 }
 
 function formatToolOutput(content: string, workspaceRootPath: string | null) {
-  return content.replace(/\/[^\s"']+/g, (value) => formatRelativePath(value, workspaceRootPath));
+  return content.replace(/\/[^\s"']+/g, (value) => {
+    if (value.startsWith('//')) return value;
+    return formatRelativePath(value, workspaceRootPath);
+  });
 }

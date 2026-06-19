@@ -15,7 +15,7 @@ import { WorkspaceSetup } from '../WorkspaceSetup';
 import { createTimelineItemFromRun } from '../../store/timeline';
 import { Badge } from '../ui/Badge';
 import { normalizeMarkdownTables } from '../../utils/markdown';
-import type { Agent, Message, Mention, PlanCardModel, Task, TaskAssignment, TaskDetail } from '../../types';
+import type { Agent, ChatTimelineItem, Message, Mention, PlanCardModel, Task, TaskAssignment, TaskDetail } from '../../types';
 
 function slugifyAgentName(name: string) {
   return name
@@ -294,6 +294,23 @@ export function ChatArea() {
     }
   }
 
+  async function retryRun(item: ChatTimelineItem) {
+    if (!convId) return;
+    try {
+      if (item.taskId) {
+        const response = await api.rerunTask(item.taskId, { agentId: item.agentId });
+        dispatch({ type: 'UPSERT_TIMELINE_ITEM', payload: { convId, item: createTimelineItemFromRun(response.run) } });
+        dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: response.run.id } });
+        dispatch({ type: 'UPDATE_PLAN_ITEM_TASK', payload: { convId, taskId: response.task.id, assignmentId: response.assignment?.id, runId: response.run.id, status: response.run.status } });
+        socketService.subscribeRun(response.run.id);
+      } else {
+        await startRun(convId, item.prompt, item.agentId, undefined, workspace, dispatch);
+      }
+    } catch (e: unknown) {
+      dispatch({ type: 'SET_ERROR', payload: e instanceof Error ? e.message : '重试运行失败' });
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || !convId || sending) return;
     const rawPrompt = input.trim();
@@ -483,7 +500,7 @@ export function ChatArea() {
                         </div>
                       </div>
                     )
-                    : <RunCard key={entry.key} item={entry.item} isActive={activeRunIds.includes(entry.item.runId)} onInterrupt={() => socketService.interruptRun(entry.item.runId)} onFocusArtifacts={(runId, tab) => openArtifacts(tab, runId)} />
+                    : <RunCard key={entry.key} item={entry.item} isActive={activeRunIds.includes(entry.item.runId)} onInterrupt={() => socketService.interruptRun(entry.item.runId)} onFocusArtifacts={(runId, tab) => openArtifacts(tab, runId)} onRetry={() => void retryRun(entry.item)} />
               ))
             )}
             {planning ? <SystemMessageIndicator text="@orchestrator 正在分析需求并生成 DAG 任务链..." /> : null}

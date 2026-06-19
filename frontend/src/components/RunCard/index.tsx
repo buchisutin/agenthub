@@ -32,16 +32,30 @@ function getSafeAgentTitle(agentName: string | null | undefined, agentId: string
   return candidate;
 }
 
+const STATUS_ACCENT: Record<string, { rail: string; tint: string; border: string }> = {
+  running: { rail: '#1A6BCC', tint: 'rgba(26, 107, 204, 0.035)', border: 'rgba(26, 107, 204, 0.28)' },
+  queued: { rail: '#1A6BCC', tint: 'rgba(26, 107, 204, 0.035)', border: 'rgba(26, 107, 204, 0.28)' },
+  failed: { rail: '#C0392B', tint: 'rgba(192, 57, 43, 0.04)', border: 'rgba(192, 57, 43, 0.30)' },
+  interrupted: { rail: '#92620A', tint: 'rgba(146, 98, 10, 0.04)', border: 'rgba(146, 98, 10, 0.28)' },
+  completed: { rail: '#D1D0CC', tint: '#FFFFFF', border: '#E5E7EB' },
+};
+
+function getStatusAccent(status: string) {
+  return STATUS_ACCENT[status] ?? STATUS_ACCENT.completed;
+}
+
 export function RunCard({
   item,
   isActive,
   onInterrupt,
   onFocusArtifacts,
+  onRetry,
 }: {
   item: ChatTimelineItem;
   isActive: boolean;
   onInterrupt: () => void;
   onFocusArtifacts?: (runId: string, tab: 'diff' | 'preview') => void;
+  onRetry?: () => void;
 }) {
   const { dispatch } = useApp();
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -167,15 +181,18 @@ export function RunCard({
     || showSkippedState
     || showRightPanelGuide;
 
+  const accent = getStatusAccent(item.status);
+
   return (
     <div
       ref={cardRef}
       id={`run-card-${item.runId}`}
-      className="mr-auto max-w-[85%] space-y-3 rounded-xl p-4"
+      className="mr-auto max-w-[85%] space-y-3 overflow-hidden rounded-xl p-4 pl-[18px] transition-colors"
       style={{
-        backgroundColor: '#FFFFFF',
-        border: '0.5px solid #E5E7EB',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+        backgroundColor: accent.tint,
+        border: `0.5px solid ${accent.border}`,
+        borderLeft: `3px solid ${accent.rail}`,
+        boxShadow: '0 1px 2px rgba(9,9,11,0.04)',
       }}
     >
       <RunHeader
@@ -281,7 +298,14 @@ export function RunCard({
             </RunFooter>
           )}
           {detailError && <InlineError message={detailError} />}
-          {item.error && <InlineError message={item.error} />}
+          {(item.status === 'failed' || item.status === 'interrupted' || item.error) && (
+            <FailurePanel
+              status={item.status}
+              error={item.error}
+              onRetry={onRetry}
+              onViewRawLog={onFocusArtifacts ? () => onFocusArtifacts(item.runId, 'diff') : undefined}
+            />
+          )}
         </>
       )}
     </div>
@@ -310,14 +334,18 @@ function RunHeader({
     });
   }, [item.startedAt]);
   const agentTitle = getSafeAgentTitle(item.agentName, item.agentId);
+  const running = item.status === 'queued' || item.status === 'running';
 
   return (
     <div className="flex items-center gap-3">
-      <div
-        className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-xs font-semibold"
-        style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
-      >
-        {agentTitle.slice(0, 1).toUpperCase()}
+      <div className="relative mt-0.5 flex-shrink-0">
+        <div
+          className="flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold"
+          style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
+        >
+          {agentTitle.slice(0, 1).toUpperCase()}
+        </div>
+        <StatusIndicator status={item.status} />
       </div>
       <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
         <div className="min-w-0">
@@ -329,6 +357,14 @@ function RunHeader({
               {timestamp}
             </span>
             <Badge variant={getStatusVariant(item.status)}>{getStatusLabel(item.status)}</Badge>
+            {running && (
+              <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: '#1A6BCC' }}>
+                轮询中
+                <span className="run-dot inline-block h-1 w-1 rounded-full bg-current" />
+                <span className="run-dot inline-block h-1 w-1 rounded-full bg-current" />
+                <span className="run-dot inline-block h-1 w-1 rounded-full bg-current" />
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
@@ -372,35 +408,60 @@ function RunTimeline({
   const completedBlocks = toolBlocks.filter((block) => block.status === 'completed');
   const errorBlocks = toolBlocks.filter((block) => block.status === 'error');
 
-  const MAX_VISIBLE = 5;
+  const MAX_VISIBLE = 6;
   const visibleCompleted = completedBlocks.slice(-MAX_VISIBLE);
   const hiddenCompletedCount = completedBlocks.length - visibleCompleted.length;
+  const hasTree = visibleCompleted.length > 0 || errorBlocks.length > 0 || hiddenCompletedCount > 0;
 
   return (
-    <div className="mb-4 space-y-2">
-      {(visibleCompleted.length > 0 || errorBlocks.length > 0 || hiddenCompletedCount > 0) && (
-        <div className="mb-2 text-[11px] font-medium uppercase tracking-wider" style={{ color: '#9CA3AF' }}>
-          EXECUTED TOOLS
+    <div className="mb-4 space-y-2.5">
+      {hasTree && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-medium uppercase tracking-wider" style={{ color: '#9CA3AF' }}>
+            EXECUTED TOOLS
+          </span>
+          <span className="text-[11px]" style={{ color: 'var(--app-text-tertiary)' }}>
+            {completedBlocks.length + errorBlocks.length}
+          </span>
         </div>
       )}
 
-      <div className="flex flex-wrap gap-1.5">
-        {visibleCompleted.map((block) => (
-          <ToolChip key={block.id} block={block} workspaceRootPath={workspaceRootPath} />
-        ))}
-        {errorBlocks.map((block) => (
-          <ToolChip key={block.id} block={block} workspaceRootPath={workspaceRootPath} isError onClick={onFocusArtifacts} />
-        ))}
-      </div>
+      {hasTree && (
+        <div className="run-tree">
+          {hiddenCompletedCount > 0 && (
+            <div className="run-tree-row flex items-center py-1 text-xs" style={{ color: 'var(--app-text-tertiary)' }}>
+              <span className="font-mono">… 较早的 {hiddenCompletedCount} 个工具调用已折叠</span>
+            </div>
+          )}
+          {visibleCompleted.map((block) => (
+            <ToolRow key={block.id} block={block} workspaceRootPath={workspaceRootPath} />
+          ))}
+          {errorBlocks.map((block) => (
+            <ToolRow key={block.id} block={block} workspaceRootPath={workspaceRootPath} isError onClick={onFocusArtifacts} />
+          ))}
+        </div>
+      )}
 
       {runningBlocks.length > 0 && (
-        <div
-          className="flex h-8 items-center gap-2 overflow-hidden rounded-md px-3 font-mono text-xs"
-          style={{ backgroundColor: '#111827', color: '#A3BE8C' }}
-        >
-          <div className="relative flex-1 overflow-hidden text-ellipsis whitespace-nowrap pr-3">
-            &gt; {runningBlocks[0].toolName} {formatRelativePath(runningBlocks[0].inputPreview || '', workspaceRootPath)}
-            <span className="typing-cursor ml-1 inline-block">▉</span>
+        <div className="run-terminal">
+          <div className="run-terminal-head">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#FF5F56' }} />
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#FFBD2E' }} />
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#27C93F' }} />
+            <span className="ml-1 text-[11px] uppercase tracking-wider" style={{ color: '#6E7681' }}>
+              {runningBlocks[0].toolName} · 运行中
+            </span>
+          </div>
+          <div className="run-terminal-body" style={{ maxHeight: 'none' }}>
+            <div className="relative overflow-hidden text-ellipsis whitespace-nowrap">
+              <span style={{ color: '#3FB950' }}>&gt; </span>
+              {runningBlocks[0].toolName} {formatRelativePath(runningBlocks[0].inputPreview || '', workspaceRootPath)}
+              <span className="typing-cursor ml-1 inline-block" style={{ color: '#3FB950' }}>▉</span>
+            </div>
+            <div
+              className="run-progress-track mt-2 h-0.5 w-full rounded-full"
+              style={{ backgroundColor: 'rgba(63,185,80,0.18)', color: '#3FB950' }}
+            />
           </div>
         </div>
       )}
@@ -408,23 +469,24 @@ function RunTimeline({
   );
 }
 
-function ToolChip({ block, workspaceRootPath, isError = false, onClick }: { block: ToolCallBlock; workspaceRootPath: string | null; isError?: boolean; onClick?: () => void }) {
+function ToolRow({ block, workspaceRootPath, isError = false, onClick }: { block: ToolCallBlock; workspaceRootPath: string | null; isError?: boolean; onClick?: () => void }) {
   const preview = formatRelativePath(block.inputPreview || block.toolName, workspaceRootPath);
   const dotColor = isError ? '#EF4444' : '#10B981';
 
   return (
     <div
       onClick={isError ? onClick : undefined}
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-xs ${isError ? 'cursor-pointer' : 'cursor-default'}`}
-      style={{
-        backgroundColor: 'var(--card-subtle)',
-        color: '#4B5563',
-        border: '0.5px solid var(--app-border)',
-      }}
+      className={`run-tree-row group flex items-center gap-2 rounded-md py-1 pr-2 text-xs ${isError ? 'cursor-pointer' : 'cursor-default'}`}
+      style={isError ? { color: '#B91C1C' } : { color: '#4B5563' }}
     >
-      <span className="h-1 w-1 flex-shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
-      <span className="font-medium">{block.toolName}</span>
-      <span className="opacity-70 max-w-[120px] truncate">{preview}</span>
+      <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
+      <span className="font-mono font-medium">{block.toolName}</span>
+      <span className="min-w-0 flex-1 truncate font-mono opacity-70">{preview}</span>
+      {isError && (
+        <span className="flex-shrink-0 text-[11px] font-medium opacity-0 transition-opacity group-hover:opacity-100">
+          查看日志 →
+        </span>
+      )}
     </div>
   );
 }
@@ -617,6 +679,170 @@ function InlineError({ message }: { message: string }) {
   return (
     <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--card-subtle)', border: '0.5px solid var(--app-border)', color: 'var(--status-danger)' }}>
       {message}
+    </div>
+  );
+}
+
+function StatusIndicator({ status }: { status: ChatTimelineItem['status'] }) {
+  if (status === 'running' || status === 'queued') {
+    return (
+      <span
+        className="run-pulse-dot absolute -bottom-0.5 -right-0.5 block h-2.5 w-2.5 rounded-full ring-2"
+        style={{ backgroundColor: '#1A6BCC', color: '#1A6BCC', boxShadow: '0 0 0 2px var(--card-bg)' }}
+        aria-hidden
+      />
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span
+        className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] font-bold text-white"
+        style={{ backgroundColor: '#C0392B', boxShadow: '0 0 0 2px var(--card-bg)' }}
+        aria-hidden
+      >
+        !
+      </span>
+    );
+  }
+  if (status === 'interrupted') {
+    return (
+      <span
+        className="absolute -bottom-0.5 -right-0.5 block h-2.5 w-2.5 rounded-full"
+        style={{ backgroundColor: '#92620A', boxShadow: '0 0 0 2px var(--card-bg)' }}
+        aria-hidden
+      />
+    );
+  }
+  return (
+    <span
+      className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full text-white"
+      style={{ backgroundColor: '#1A7F4B', boxShadow: '0 0 0 2px var(--card-bg)' }}
+      aria-hidden
+    >
+      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    </span>
+  );
+}
+
+function renderLogLine(line: string, index: number) {
+  const lower = line.toLowerCase();
+  let cls = '';
+  if (/(^|\b)(error|err!|errno|exception|failed|fatal|traceback)\b/.test(lower) || line.startsWith('npm ERR')) {
+    cls = 'term-err';
+  } else if (/\b(warn|warning|deprecated)\b/.test(lower)) {
+    cls = 'term-warn';
+  } else if (/^\s*(at |\.\.\.|\$ |> )/.test(line)) {
+    cls = 'term-dim';
+  }
+  return (
+    <div key={index} className={cls}>
+      {line.length ? line : '\u00A0'}
+    </div>
+  );
+}
+
+function FailurePanel({
+  status,
+  error,
+  onRetry,
+  onViewRawLog,
+}: {
+  status: ChatTimelineItem['status'];
+  error: string | null;
+  onRetry?: () => void;
+  onViewRawLog?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isInterrupted = status === 'interrupted';
+  const accent = isInterrupted ? '#92620A' : '#C0392B';
+  const tint = isInterrupted ? 'rgba(146, 98, 10, 0.06)' : 'rgba(192, 57, 43, 0.05)';
+  const borderTint = isInterrupted ? 'rgba(146, 98, 10, 0.30)' : 'rgba(192, 57, 43, 0.28)';
+  const message = (error ?? '').trim();
+  const lines = message ? message.split('\n') : [];
+  const collapsible = lines.length > 8;
+  const shownLines = collapsible && !expanded ? lines.slice(0, 8) : lines;
+  const heading = isInterrupted ? '执行已中断' : '执行失败 / 熔断';
+  const subtitle = isInterrupted
+    ? '运行在完成前被中断，未产生可用结果。'
+    : '底层工具调用或编排流程未能完成，请排查下方日志后重试。';
+
+  return (
+    <div className="overflow-hidden rounded-lg" style={{ backgroundColor: tint, border: `0.5px solid ${borderTint}` }}>
+      <div className="flex items-start gap-2.5 px-3.5 py-3">
+        <span
+          className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+          style={{ backgroundColor: accent }}
+          aria-hidden
+        >
+          {isInterrupted ? '‖' : '!'}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold" style={{ color: accent }}>{heading}</span>
+            <Badge variant={isInterrupted ? 'interrupted' : 'failed'}>{getStatusLabel(status)}</Badge>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--app-text-secondary)' }}>
+            {subtitle}
+          </p>
+        </div>
+      </div>
+
+      {lines.length > 0 && (
+        <div className="px-3.5 pb-3">
+          <div className="run-terminal">
+            <div className="run-terminal-head">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#FF5F56' }} />
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#FFBD2E' }} />
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: '#27C93F' }} />
+              <span className="ml-1 text-[11px] uppercase tracking-wider" style={{ color: '#6E7681' }}>
+                error output
+              </span>
+            </div>
+            <div className="run-terminal-body">
+              {shownLines.map((line, index) => renderLogLine(line, index))}
+              {collapsible && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((value) => !value)}
+                  className="mt-1.5 text-[11px] font-medium"
+                  style={{ color: '#58A6FF' }}
+                >
+                  {expanded ? '收起日志 ↑' : `展开剩余 ${lines.length - 8} 行 ↓`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 px-3.5 pb-3.5">
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white"
+            style={{ backgroundColor: accent }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+            一键重试
+          </button>
+        )}
+        {onViewRawLog && (
+          <button
+            type="button"
+            onClick={onViewRawLog}
+            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium"
+            style={secondaryButton(false)}
+          >
+            查看完整 Raw Log
+          </button>
+        )}
+      </div>
     </div>
   );
 }

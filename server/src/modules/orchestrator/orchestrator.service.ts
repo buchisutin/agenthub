@@ -344,6 +344,7 @@ function buildPlannerPrompt(
   prompt: string,
   agents: AgentRecord[],
   workspaceStatus: WorkspaceExecutionStatus,
+  context?: { lastPlanSummary?: string | null; recentUserMessages?: string[] },
 ): string {
   return [
     "You are a planning orchestrator for a multi-agent coding workspace.",
@@ -380,6 +381,15 @@ function buildPlannerPrompt(
     "dirty_files_count and dirty_files_sample describe uncommitted local changes. They are for workspace safety context, not a summary of project architecture.",
     "Include affected_files as a list of repo-relative file paths or globs the task is expected to touch.",
     "Output schema fields per task: id, title, description, task_type, expected_output, affected_files, suggested_agent, priority, depends_on.",
+    ...(context?.lastPlanSummary
+      ? ["Project context (last completed plan):", context.lastPlanSummary]
+      : []),
+    ...(context?.recentUserMessages && context.recentUserMessages.length > 0
+      ? [
+          "Recent user messages (most recent last):",
+          ...context.recentUserMessages.map((m) => `- ${m}`),
+        ]
+      : []),
     "User request:",
     prompt,
     "Available agents:",
@@ -602,12 +612,15 @@ export class OrchestratorService {
       prompt,
     });
 
+    const lastPlanSummary = this.messagesService.getLastCompletedPlanSummary(conversationId);
+    const recentUserMessages = this.messagesService.getRecentUserMessages(conversationId, 5);
     const plannerResult = await this.plan(
       conversationId,
       prompt,
       agents,
       workspacePath,
       workspaceStatus,
+      { lastPlanSummary, recentUserMessages },
     );
     const dagPreview = buildDagPreview(plannerResult.tasks);
     const taskIds: string[] = [];
@@ -1091,11 +1104,12 @@ export class OrchestratorService {
     agents: AgentRecord[],
     workspacePath: string,
     workspaceStatus: WorkspaceExecutionStatus,
+    context?: { lastPlanSummary?: string | null; recentUserMessages?: string[] },
   ): Promise<PlannerResult> {
     if (this.deps.plan) {
       try {
         const planned = await this.deps.plan({
-          prompt: buildPlannerPrompt(prompt, agents, workspaceStatus),
+          prompt: buildPlannerPrompt(prompt, agents, workspaceStatus, context),
           agents,
           workspacePath,
           workspaceStatus,
@@ -1116,6 +1130,7 @@ export class OrchestratorService {
         agents,
         workspacePath,
         workspaceStatus,
+        context,
       );
     } catch {
       return fallbackPlan(prompt);
@@ -1128,6 +1143,7 @@ export class OrchestratorService {
     agents: AgentRecord[],
     workspacePath: string,
     workspaceStatus: WorkspaceExecutionStatus,
+    context?: { lastPlanSummary?: string | null; recentUserMessages?: string[] },
   ): Promise<PlannerResult> {
     const plannerAgent =
       agents.find((agent) => agent.adapter_type === "claude_cli") ??
@@ -1152,7 +1168,7 @@ export class OrchestratorService {
       {
         runId: hiddenRunId,
         conversationId: `planner:${hiddenRunId}`,
-        prompt: buildPlannerPrompt(prompt, agents, workspaceStatus),
+        prompt: buildPlannerPrompt(prompt, agents, workspaceStatus, context),
         workspacePath,
         agentConfig: plannerAgent.config_json,
       },
@@ -1184,58 +1200,47 @@ export class OrchestratorService {
   }
 
   private matchAgent(task: PlannerTask, agents: AgentRecord[]): AgentRecord | null {
-    const suggestedAgent = task.suggested_agent;
-    if (suggestedAgent) {
-      const normalized = suggestedAgent.trim().toLowerCase();
-      const exactSlug = agents.find((agent) => agent.slug.toLowerCase() === normalized);
-      if (exactSlug) {
-        return exactSlug;
-      }
+    let best: { agent: AgentRecord; score: number } | null = null;
 
-      const exact = agents.find((agent) => agent.name.toLowerCase() === normalized);
-      if (exact) {
-        return exact;
-      }
+    for (const agent of agents) {
+      let score = 0;
+      const suggestedRaw = task.suggested_agent?.trim().toLowerCase();
 
-      const slug = slugify(normalized);
-      const bySlug = agents.find(
-        (agent) => agent.slug.toLowerCase() === slug || slugify(agent.name) === slug,
-      );
-      if (bySlug) {
-        return bySlug;
-      }
-
-      const byContains = agents.find((agent) => {
-        const name = agent.name.toLowerCase();
+      if (suggestedRaw) {
+        const suggestedSlug = slugify(suggestedRaw);
         const agentSlug = agent.slug.toLowerCase();
-        return name.includes(normalized) || agentSlug.includes(slug);
-      });
-      if (byContains) {
-        return byContains;
+        const agentName = agent.name.toLowerCase();
+
+        if (agentSlug === suggestedRaw || agentSlug === suggestedSlug) {
+          score += 10;
+        } else if (agentName === suggestedRaw) {
+          score += 8;
+        } else if (agentSlug.includes(suggestedSlug) || agentName.includes(suggestedRaw)) {
+          score += 5;
+        }
       }
 
-      const byCapability = agents.find((agent) =>
-        (agent.capabilities ?? []).some((capability) => {
-          const lower = capability.toLowerCase();
-          return lower.includes(normalized) || normalized.includes(lower);
-        }),
-      );
-      if (byCapability) {
-        return byCapability;
-      }
-    }
-
-    const capabilityHints = buildCapabilityHints(task);
-    const byTaskType = agents.find((agent) => {
-      const values = [agent.name, agent.slug, ...(agent.capabilities ?? [])]
+      const capabilityHints = buildCapabilityHints(task);
+      const agentValues = [agent.name, agent.slug, ...(agent.capabilities ?? [])]
         .join(" ")
         .toLowerCase();
-      return capabilityHints.some((hint) => values.includes(hint));
-    });
-    if (byTaskType) {
-      return byTaskType;
+
+      if (task.task_type !== "general" && agentValues.includes(task.task_type)) {
+        score += 3;
+      }
+
+      // Cap keyword hits at 3 so a keyword-rich generalist cannot outrank an exact name match (+8)
+      const keywordHits = capabilityHints.filter((hint) => agentValues.includes(hint)).length;
+      score += Math.min(keywordHits, 3) * 2;
+
+      if (best === null || score > best.score) {
+        best = { agent, score };
+      }
     }
 
+    if (best && best.score > 0) {
+      return best.agent;
+    }
     return this.agentsService.getDefaultAgent();
   }
 

@@ -517,6 +517,68 @@ describe("Minimal orchestrator", () => {
     expect(response.json().plan.items[0].assignedAgentId).toBe(frontendAgentId);
   });
 
+  it("injects last completed plan summary and recent user messages into planner prompt", async () => {
+    let capturedPrompt = "";
+    const harness = await createTestHarness({
+      orchestratorPlanner: async ({ prompt }) => {
+        capturedPrompt = prompt;
+        return {
+          summary: "history test plan",
+          tasks: [{ id: "t1", title: "任务", description: "do it", task_type: "general", expected_output: "done", affected_files: [], suggested_agent: null, priority: 1, depends_on: [] }],
+        };
+      },
+    });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "History", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    const svc = harness.server.app.locals.messagesService;
+    svc.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "prior plan",
+      messageType: "plan",
+      metadata: { planId: "p1", summary: "博客系统已完成前端和后端", watchStatus: "completed", items: [] },
+    });
+    svc.createMessage({ conversationId, senderType: "user", content: "把按钮改成蓝色", messageType: "text", metadata: null });
+
+    await harness.client.post(`/conversations/${conversationId}/orchestrate`, { prompt: "加一个导出功能" });
+
+    expect(capturedPrompt).toContain("博客系统已完成前端和后端");
+    expect(capturedPrompt).toContain("把按钮改成蓝色");
+  });
+
+  it("exact slug match beats capability keyword match in agent scoring", async () => {
+    const harness = await createTestHarness({
+      orchestratorPlanner: async () => ({
+        summary: "scoring test",
+        tasks: [{
+          id: "t1",
+          title: "backend",
+          description: "backend api service test docs general",
+          task_type: "backend",
+          expected_output: "done",
+          affected_files: [],
+          suggested_agent: "exact-agent",
+          priority: 1,
+          depends_on: [],
+        }],
+      }),
+    });
+    harnesses.push(harness);
+    // keyword-rich agent that would win under old first-match logic
+    harness.createAgent("keyword-rich-backend");
+    const exactAgentId = harness.createAgent("exact-agent");
+    const conversation = await harness.client.post("/conversations", { title: "Scoring", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, { prompt: "做后端" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().plan.items[0].assignedAgentId).toBe(exactAgentId);
+  });
+
   it("passes agent capabilities and instruction summaries into the planner prompt", async () => {
     const harness = await createTestHarness({
       orchestratorPlanner: async ({ prompt, agents, workspaceStatus }) => {

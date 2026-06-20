@@ -328,6 +328,14 @@ export interface WorkspaceDiffResponse {
   };
 }
 
+export interface WorkspaceChangedEvent {
+  type: "workspace_changed";
+  eventId?: string;
+  conversationId: string;
+  workspaceId: string;
+  reason: "merge_completed";
+}
+
 export interface PreviewState {
   runId: string;
   port: number;
@@ -415,6 +423,7 @@ export interface OrchestrateResponse {
   plan: TaskPlan | null;
   runs: RunSummary[];
   queued?: boolean;
+  pendingClarification?: boolean;
 }
 
 export type ConversationTimelineItem =

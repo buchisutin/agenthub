@@ -585,6 +585,33 @@ export class OrchestratorService {
       }
     }
 
+    // Check for an active plan in this conversation — queue if one is already watching
+    const activePlan = this.messagesService
+      .listWatchingPlanMessages()
+      .find((msg) => msg.conversation_id === conversationId);
+
+    if (activePlan) {
+      const activeSummary =
+        typeof activePlan.metadata_json?.summary === "string"
+          ? activePlan.metadata_json.summary
+          : "当前任务";
+      this.messagesService.createMessage({
+        conversationId,
+        senderType: "orchestrator",
+        content: `收到，当前正在执行：${activeSummary}，完成后将处理您的请求。`,
+        messageType: "system",
+        metadata: { sourceMessageId: sourceMessageId ?? null },
+      });
+      this.messagesService.createMessage({
+        conversationId,
+        senderType: "user",
+        content: prompt,
+        messageType: "queued_prompt",
+        metadata: { consumed: false, sourceMessageId: sourceMessageId ?? null },
+      });
+      return { plan: null, runs: [], queued: true };
+    }
+
     const enabledAgents = this.agentsService.listAgents();
     const checks = await Promise.all(
       enabledAgents.map(async (agent) => ({
@@ -826,6 +853,16 @@ export class OrchestratorService {
             totalDurationSeconds,
           },
         });
+        // Drain the queue: trigger next pending prompt after this plan completes
+        const [nextQueued] = this.messagesService.listQueuedPrompts(conversationId);
+        if (nextQueued) {
+          this.messagesService.markQueuedPromptConsumed(nextQueued.id);
+          void this.orchestrateConversation(conversationId, nextQueued.content, undefined).catch(
+            (err) => {
+              console.error("[queue drain error]", err);
+            },
+          );
+        }
         this.activePlanSchedulers.delete(planMessage.id);
       },
       (task, reason) => {
@@ -1049,6 +1086,15 @@ export class OrchestratorService {
           ...(current?.metadata_json ?? {}),
           watchStatus: "completed",
         });
+        const [nextQueuedResume] = this.messagesService.listQueuedPrompts(planMessage.conversation_id);
+        if (nextQueuedResume) {
+          this.messagesService.markQueuedPromptConsumed(nextQueuedResume.id);
+          void this.orchestrateConversation(planMessage.conversation_id, nextQueuedResume.content, undefined).catch(
+            (err) => {
+              console.error("[queue drain error]", err);
+            },
+          );
+        }
         this.activePlanSchedulers.delete(planMessageId);
       },
       (task, reason) => {

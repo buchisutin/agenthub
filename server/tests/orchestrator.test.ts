@@ -620,6 +620,64 @@ describe("Minimal orchestrator", () => {
     expect(progressMsg.content).toContain("写接口");
   });
 
+  it("queues prompt and returns queued=true when a plan is already watching", async () => {
+    const harness = await createTestHarness({
+      orchestratorPlanner: async () => ({
+        summary: "active plan",
+        tasks: [{ id: "t1", title: "长任务", description: "slow", task_type: "general", expected_output: "done", affected_files: [], suggested_agent: null, priority: 1, depends_on: [] }],
+      }),
+    });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "Queue", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    // Seed a watching plan directly so orchestrate sees it as active
+    harness.server.app.locals.messagesService.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "running plan",
+      messageType: "plan",
+      metadata: { planId: "active-p", summary: "正在跑的计划", watchStatus: "watching", items: [], runIds: [], watchStartedAt: new Date().toISOString(), maxWatchMs: 120000 },
+    });
+
+    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, {
+      prompt: "这条应该被排队",
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().queued).toBe(true);
+    expect(response.json().plan).toBeNull();
+
+    const queued = harness.server.app.locals.messagesService.listQueuedPrompts(conversationId);
+    expect(queued).toHaveLength(1);
+    expect(queued[0].content).toBe("这条应该被排队");
+  });
+
+  it("sends an instant ack message when queueing a prompt", async () => {
+    const harness = await createTestHarness({
+      orchestratorPlanner: async () => ({ summary: "s", tasks: [{ id: "t1", title: "t", description: "d", task_type: "general", expected_output: "e", affected_files: [], suggested_agent: null, priority: 1, depends_on: [] }] }),
+    });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "Ack", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    harness.server.app.locals.messagesService.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "running",
+      messageType: "plan",
+      metadata: { planId: "p-ack", summary: "当前任务摘要", watchStatus: "watching", items: [], runIds: [], watchStartedAt: new Date().toISOString(), maxWatchMs: 120000 },
+    });
+
+    await harness.client.post(`/conversations/${conversationId}/orchestrate`, { prompt: "新需求" });
+
+    const msgs = await harness.client.get(`/conversations/${conversationId}/messages`);
+    const ack = msgs.json().find((m: any) => m.message_type === "system" && m.content.includes("当前任务摘要"));
+    expect(ack).toBeDefined();
+    expect(ack.content).toContain("收到");
+  });
+
   it("passes agent capabilities and instruction summaries into the planner prompt", async () => {
     const harness = await createTestHarness({
       orchestratorPlanner: async ({ prompt, agents, workspaceStatus }) => {

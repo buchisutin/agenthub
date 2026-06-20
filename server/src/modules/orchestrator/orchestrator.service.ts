@@ -1291,6 +1291,33 @@ export class OrchestratorService {
     return this.agentsService.getDefaultAgent();
   }
 
+  async dispatchDirectRun(
+    conversationId: string,
+    agentSlug: string,
+    prompt: string,
+    sourceMessageId?: string,
+  ): Promise<{ run: ReturnType<RunManager["createRun"]> } | null> {
+    const conversation = this.conversationsService.getById(conversationId);
+    if (!conversation) {
+      throw new Error("Conversation not found");
+    }
+    const agent = this.agentsService.resolveAgentByMention(agentSlug);
+    if (!agent) {
+      return null;
+    }
+    const check = await this.runtimeRegistry.checkAdapter(agent.adapter_type);
+    if (!check.available) {
+      return null;
+    }
+    const run = this.runManager.createRun({
+      conversationId,
+      agentId: agent.id,
+      prompt,
+      sourceMessageId,
+    });
+    return { run };
+  }
+
   async resumeWatchingPlans(): Promise<void> {
     if (this.closed) {
       return;

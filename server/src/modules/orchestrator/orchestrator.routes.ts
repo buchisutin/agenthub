@@ -55,6 +55,29 @@ export function createOrchestratorRouter(
       return;
     }
 
+    // @slug direct routing — bypasses orchestrateConversation intentionally, not subject to message queue
+    const atMatch = /^@([a-z0-9-]+)\s+([\s\S]+)/i.exec(prompt);
+    if (atMatch) {
+      try {
+        const directResult = await orchestratorService.dispatchDirectRun(
+          req.params.conversationId,
+          atMatch[1],
+          atMatch[2].trim(),
+          typeof req.body?.sourceMessageId === "string" ? req.body.sourceMessageId : undefined,
+        );
+        if (directResult) {
+          res.json(directResult);
+          return;
+        }
+        // Agent not found for slug — fall through to normal orchestrate
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to dispatch direct run";
+        const status = /conversation not found/i.test(message) ? 404 : 500;
+        res.status(status).json({ detail: message });
+        return;
+      }
+    }
+
     try {
       const result = await orchestratorService.orchestrateConversation(
         req.params.conversationId,

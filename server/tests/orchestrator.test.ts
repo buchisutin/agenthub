@@ -605,7 +605,7 @@ describe("Minimal orchestrator", () => {
 
     harness.client.post(`/conversations/${conversationId}/orchestrate`, { prompt: "做接口" });
 
-    await waitFor(() => resolvers.size > 0, 2000);
+    await waitFor(async () => resolvers.size > 0, 2000);
     const [runId, resolve] = [...resolvers.entries()][0];
     resolve({ status: "completed", exitCode: 0 });
 
@@ -618,6 +618,55 @@ describe("Minimal orchestrator", () => {
     const progressMsg = msgs.json().find((m: any) => m.metadata_json?.progressType === "task_completed");
     expect(progressMsg).toBeDefined();
     expect(progressMsg.content).toContain("写接口");
+  });
+
+  it("@slug prefix dispatches directly to named agent without planning", async () => {
+    let plannerCalled = false;
+    const harness = await createTestHarness({
+      orchestratorPlanner: async () => {
+        plannerCalled = true;
+        return { summary: "should not run", tasks: [] };
+      },
+    });
+    harnesses.push(harness);
+    const agentId = harness.server.app.locals.agentsService.getDefaultAgent()!.id;
+    const conversation = await harness.client.post("/conversations", { title: "Direct", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, {
+      prompt: "@claude-code 写一个排序函数",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(plannerCalled).toBe(false);
+    expect(response.json().run).toBeDefined();
+    expect(response.json().run.agent_id).toBe(agentId);
+  });
+
+  it("@slug falls through to normal orchestrate when agent is not found", async () => {
+    let plannerCalled = false;
+    const harness = await createTestHarness({
+      orchestratorPlanner: async () => {
+        plannerCalled = true;
+        return {
+          summary: "fallthrough",
+          tasks: [{ id: "t1", title: "任务", description: "d", task_type: "general", expected_output: "e", affected_files: [], suggested_agent: null, priority: 1, depends_on: [] }],
+        };
+      },
+    });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "Fallthrough", type: "single" });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+
+    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, {
+      prompt: "@nonexistent-agent 做点什么",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(plannerCalled).toBe(true);
+    expect(response.json().plan).toBeDefined();
   });
 
   it("queues prompt and returns queued=true when a plan is already watching", async () => {

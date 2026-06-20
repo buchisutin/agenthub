@@ -78,6 +78,23 @@ export function createOrchestratorRouter(
       }
     }
 
+    // Suspended planner session check — user is replying to a clarification question
+    if (orchestratorService.hasSuspendedPlannerSession(req.params.conversationId)) {
+      try {
+        const result = await orchestratorService.resumePlannerSession(
+          req.params.conversationId,
+          prompt,
+          typeof req.body?.sourceMessageId === "string" ? req.body.sourceMessageId : undefined,
+        );
+        res.json(result);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to resume planner session";
+        res.status(500).json({ detail: message });
+        return;
+      }
+    }
+
     try {
       const result = await orchestratorService.orchestrateConversation(
         req.params.conversationId,

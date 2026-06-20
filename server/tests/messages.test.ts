@@ -358,3 +358,106 @@ describe("messages and conversation timeline", () => {
     expect(Number(count.c)).toBe(0);
   });
 });
+
+const helperHarnesses: Array<Awaited<ReturnType<typeof createTestHarness>>> = [];
+
+afterEach(async () => {
+  while (helperHarnesses.length > 0) {
+    const harness = helperHarnesses.pop();
+    if (harness) {
+      await harness.close();
+    }
+  }
+});
+
+describe("messages.service history helpers", () => {
+  it("getLastCompletedPlanSummary returns null when no completed plans exist", async () => {
+    const harness = await createTestHarness();
+    helperHarnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "h1", type: "single" });
+    const conversationId = conversation.json().id;
+
+    const result = harness.server.app.locals.messagesService.getLastCompletedPlanSummary(conversationId);
+    expect(result).toBeNull();
+  });
+
+  it("getLastCompletedPlanSummary returns summary of most recent completed plan", async () => {
+    const harness = await createTestHarness();
+    helperHarnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "h2", type: "single" });
+    const conversationId = conversation.json().id;
+    const svc = harness.server.app.locals.messagesService;
+
+    svc.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "old plan",
+      messageType: "plan",
+      metadata: { planId: "p1", summary: "old summary", watchStatus: "completed", items: [] },
+    });
+    svc.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "new plan",
+      messageType: "plan",
+      metadata: { planId: "p2", summary: "new summary", watchStatus: "completed", items: [] },
+    });
+    svc.createMessage({
+      conversationId,
+      senderType: "orchestrator",
+      content: "watching plan",
+      messageType: "plan",
+      metadata: { planId: "p3", summary: "should be ignored", watchStatus: "watching", items: [] },
+    });
+
+    const result = svc.getLastCompletedPlanSummary(conversationId);
+    expect(result).toBe("new summary");
+  });
+
+  it("getRecentUserMessages returns last N user messages excluding queued_prompt", async () => {
+    const harness = await createTestHarness();
+    helperHarnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "h3", type: "single" });
+    const conversationId = conversation.json().id;
+    const svc = harness.server.app.locals.messagesService;
+
+    svc.createMessage({ conversationId, senderType: "user", content: "msg1", messageType: "text", metadata: null });
+    svc.createMessage({ conversationId, senderType: "user", content: "msg2", messageType: "text", metadata: null });
+    svc.createMessage({ conversationId, senderType: "user", content: "queued msg", messageType: "queued_prompt", metadata: { consumed: false } });
+    svc.createMessage({ conversationId, senderType: "orchestrator", content: "agent reply", messageType: "system", metadata: null });
+
+    const result = svc.getRecentUserMessages(conversationId, 5);
+    expect(result).toEqual(["msg1", "msg2"]);
+    expect(result).not.toContain("queued msg");
+  });
+
+  it("listQueuedPrompts returns only unconsumed queued_prompt messages", async () => {
+    const harness = await createTestHarness();
+    helperHarnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "h4", type: "single" });
+    const conversationId = conversation.json().id;
+    const svc = harness.server.app.locals.messagesService;
+
+    const m1 = svc.createMessage({ conversationId, senderType: "user", content: "q1", messageType: "queued_prompt", metadata: { consumed: false } });
+    svc.createMessage({ conversationId, senderType: "user", content: "q2", messageType: "queued_prompt", metadata: { consumed: true } });
+
+    const result = svc.listQueuedPrompts(conversationId);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(m1.id);
+  });
+
+  it("markQueuedPromptConsumed sets consumed=true on the message", async () => {
+    const harness = await createTestHarness();
+    helperHarnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", { title: "h5", type: "single" });
+    const conversationId = conversation.json().id;
+    const svc = harness.server.app.locals.messagesService;
+
+    const msg = svc.createMessage({ conversationId, senderType: "user", content: "q", messageType: "queued_prompt", metadata: { consumed: false } });
+    svc.markQueuedPromptConsumed(msg.id);
+
+    const updated = svc.getById(msg.id);
+    expect(updated?.metadata_json?.consumed).toBe(true);
+    expect(svc.listQueuedPrompts(conversationId)).toHaveLength(0);
+  });
+});

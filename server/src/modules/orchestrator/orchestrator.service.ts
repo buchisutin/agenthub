@@ -7,6 +7,7 @@ import { RuntimeRegistry } from "../../runtime/runtime-registry.js";
 import {
   AgentRecord,
   MergeConflictFile,
+  MessageRecord,
   OrchestratorEvent,
   OrchestrateResponse,
   RunStatus,
@@ -1253,8 +1254,18 @@ export class OrchestratorService {
       return;
     }
 
+    const toPoll: typeof watchingPlans = [];
+    for (const planMessage of watchingPlans) {
+      if (!this.activePlanSchedulers.has(planMessage.id)) {
+        // Scheduler was lost on server restart — fail fast rather than leaving the plan stuck
+        this.handleRestartInterruption(planMessage);
+      } else {
+        toPoll.push(planMessage);
+      }
+    }
+
     await Promise.allSettled(
-      watchingPlans.map((planMessage) => this.pollOrchestratedRuns(planMessage.id)),
+      toPoll.map((planMessage) => this.pollOrchestratedRuns(planMessage.id)),
     );
     if (this.messagesService.listWatchingPlanMessages().length > 0) {
       this.ensureWatcherScheduler();
@@ -1434,8 +1445,23 @@ export class OrchestratorService {
 
       if (run.status === "failed" || run.status === "interrupted") {
         if (plannerTaskId) {
-          state.seenTerminalTaskIds.add(run.task_id);
+          state.seenTerminalTaskIds.add(run.task_id!);
           await state.scheduler.notifyFailed(plannerTaskId);
+          const failedContext = state.taskContextByPlannerTaskId.get(plannerTaskId);
+          if (failedContext) {
+            this.messagesService.createMessage({
+              conversationId: state.conversationId,
+              senderType: "orchestrator",
+              content: `${failedContext.plannerTask.title} failed`,
+              messageType: "system",
+              metadata: {
+                planMessageId: state.planMessageId,
+                taskId: run.task_id,
+                plannerTaskId,
+                progressType: "task_failed",
+              },
+            });
+          }
         }
         continue;
       }
@@ -1477,6 +1503,19 @@ export class OrchestratorService {
         }
         state.seenTerminalTaskIds.add(context.taskRecordId);
         this.persistPlanState(state, metadata.planId as string, String(metadata.summary ?? ""), metadata.sourceMessageId as string | undefined);
+        // Progress message — only on terminal states (not on start) to avoid double-counting
+        this.messagesService.createMessage({
+          conversationId: state.conversationId,
+          senderType: "orchestrator",
+          content: `${context.plannerTask.title} completed`,
+          messageType: "system",
+          metadata: {
+            planMessageId: state.planMessageId,
+            taskId: context.taskRecordId,
+            plannerTaskId,
+            progressType: "task_completed",
+          },
+        });
         await state.scheduler.notifyCompleted(plannerTaskId);
         continue;
       }
@@ -1637,6 +1676,28 @@ export class OrchestratorService {
     });
     this.activePlanSchedulers.delete(planMessage.id);
     return true;
+  }
+
+  private handleRestartInterruption(planMessage: MessageRecord): void {
+    const metadata = planMessage.metadata_json ?? {};
+    const runIds = Array.isArray(metadata.runIds)
+      ? metadata.runIds.filter((id): id is string => typeof id === "string")
+      : [];
+    const cancelledApprovalIds = this.cancelWatchingApprovals(planMessage.conversation_id, runIds, "Service restarted.");
+    this.messagesService.updateMessageMetadata(planMessage.id, {
+      ...metadata,
+      watchStatus: "timed_out",
+      timedOutAt: new Date().toISOString(),
+      restartInterrupted: true,
+      cancelledApprovalIds,
+    });
+    this.messagesService.createMessage({
+      conversationId: planMessage.conversation_id,
+      senderType: "orchestrator",
+      content: "服务重启，计划监听中断，请重新触发任务。",
+      messageType: "system",
+      metadata: { planMessageId: planMessage.id },
+    });
   }
 
   private cancelWatchingApprovals(

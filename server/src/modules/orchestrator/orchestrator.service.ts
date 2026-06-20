@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { AgentRuntime } from "../../runtime/base/agent-runtime.js";
 import { RunManager } from "../../runtime/manager/run-manager.js";
 import { RuntimeRegistry } from "../../runtime/runtime-registry.js";
 import {
@@ -17,6 +16,7 @@ import {
   TaskType,
   WorkspaceExecutionStatus,
 } from "../../shared/types.js";
+import { PlannerAgentService, type PlannerAgentResult } from "./planner-agent.service.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { AssignmentsService } from "../assignments/assignments.service.js";
 import { ConversationsService } from "../conversations/conversations.service.js";
@@ -109,6 +109,7 @@ export interface HiddenPlannerDeps {
 
 export interface OrchestratorServiceDeps extends HiddenPlannerDeps {
   emitEvent?: (event: OrchestratorEvent) => void;
+  plannerAgentService?: PlannerAgentService;
 }
 
 interface OrchestratedTaskContext {
@@ -642,14 +643,47 @@ export class OrchestratorService {
 
     const lastPlanSummary = this.messagesService.getLastCompletedPlanSummary(conversationId);
     const recentUserMessages = this.messagesService.getRecentUserMessages(conversationId, 5);
-    const plannerResult = await this.plan(
-      conversationId,
-      prompt,
-      agents,
-      workspacePath,
-      workspaceStatus,
-      { lastPlanSummary, recentUserMessages },
-    );
+
+    let plannerResult: PlannerResult;
+    if (this.deps.plan) {
+      // Test injection path — preserved for backward compat
+      try {
+        const raw = await this.deps.plan({
+          prompt: buildPlannerPrompt(prompt, agents, workspaceStatus, { lastPlanSummary, recentUserMessages }),
+          agents,
+          workspacePath,
+          workspaceStatus,
+        });
+        plannerResult =
+          typeof raw === "string"
+            ? parsePlannerJson(raw) ?? fallbackPlan(prompt)
+            : normalizePlannerResult(raw) ?? fallbackPlan(prompt);
+      } catch {
+        plannerResult = fallbackPlan(prompt);
+      }
+    } else if (this.deps.plannerAgentService) {
+      let agentResult: PlannerAgentResult;
+      try {
+        agentResult = await this.deps.plannerAgentService.startSession({
+          conversationId,
+          prompt,
+          sourceMessageId,
+          agents,
+          workspacePath,
+          workspaceStatus,
+          lastPlanSummary,
+          recentUserMessages,
+        });
+      } catch {
+        agentResult = { status: "fallback", plan: fallbackPlan(prompt) };
+      }
+      if (agentResult.status === "pending") {
+        return { plan: null, runs: [], pendingClarification: true };
+      }
+      plannerResult = agentResult.plan;
+    } else {
+      plannerResult = fallbackPlan(prompt);
+    }
     const dagPreview = buildDagPreview(plannerResult.tasks);
     const taskIds: string[] = [];
     const assignmentIds: string[] = [];
@@ -1145,105 +1179,47 @@ export class OrchestratorService {
     };
   }
 
-  private async plan(
-    conversationId: string,
-    prompt: string,
-    agents: AgentRecord[],
-    workspacePath: string,
-    workspaceStatus: WorkspaceExecutionStatus,
-    context?: { lastPlanSummary?: string | null; recentUserMessages?: string[] },
-  ): Promise<PlannerResult> {
-    if (this.deps.plan) {
-      try {
-        const planned = await this.deps.plan({
-          prompt: buildPlannerPrompt(prompt, agents, workspaceStatus, context),
-          agents,
-          workspacePath,
-          workspaceStatus,
-        });
-        if (typeof planned === "string") {
-          return parsePlannerJson(planned) ?? fallbackPlan(prompt);
-        }
-        return normalizePlannerResult(planned) ?? fallbackPlan(prompt);
-      } catch {
-        return fallbackPlan(prompt);
-      }
-    }
-
-    try {
-      return await this.runHiddenPlanner(
-        conversationId,
-        prompt,
-        agents,
-        workspacePath,
-        workspaceStatus,
-        context,
-      );
-    } catch {
-      return fallbackPlan(prompt);
-    }
+  hasSuspendedPlannerSession(conversationId: string): boolean {
+    return this.deps.plannerAgentService?.hasSuspendedSession(conversationId) ?? false;
   }
 
-  private async runHiddenPlanner(
+  clearPlannerSessions(): void {
+    this.deps.plannerAgentService?.clearSuspendedSessions();
+  }
+
+  async resumePlannerSession(
     conversationId: string,
-    prompt: string,
-    agents: AgentRecord[],
-    workspacePath: string,
-    workspaceStatus: WorkspaceExecutionStatus,
-    context?: { lastPlanSummary?: string | null; recentUserMessages?: string[] },
-  ): Promise<PlannerResult> {
-    const plannerAgent =
-      agents.find((agent) => agent.adapter_type === "claude_cli") ??
-      this.agentsService.getDefaultAgent();
-    if (!plannerAgent) {
-      throw new Error("No default agent available");
-    }
-    const plannerCheck = await this.runtimeRegistry.checkAdapter(plannerAgent.adapter_type);
-    if (!plannerCheck.available) {
-      throw new Error(
-        `Planner runtime unavailable: ${plannerAgent.adapter_type}${
-          plannerCheck.message ? ` (${plannerCheck.message})` : ""
-        }`,
-      );
+    userReply: string,
+    sourceMessageId?: string,
+  ): Promise<OrchestrateResponse> {
+    if (!this.deps.plannerAgentService) {
+      return { plan: null, runs: [], pendingClarification: false };
     }
 
-    const runtime: AgentRuntime = this.runtimeRegistry.getAdapter(plannerAgent.adapter_type);
-    const hiddenRunId = `planner-${crypto.randomUUID()}`;
-    let text = "";
-
-    const handle = await runtime.startRun(
-      {
-        runId: hiddenRunId,
-        conversationId: `planner:${hiddenRunId}`,
-        prompt: buildPlannerPrompt(prompt, agents, workspaceStatus, context),
-        workspacePath,
-        agentConfig: plannerAgent.config_json,
-      },
-      {
-        onEvent: async (event) => {
-          if (event.type === "text_delta") {
-            text += event.delta;
-            this.deps.emitEvent?.({
-              type: "orchestrator_text_delta",
-              conversationId,
-              delta: event.delta,
-            });
-          }
-        },
-      },
-    );
-
-    const timeout = setTimeout(() => {
-      void runtime.interruptRun(hiddenRunId).catch(() => undefined);
-    }, 60_000);
-
-    const completion = await handle.completion.finally(() => clearTimeout(timeout));
-    if (completion.status !== "completed") {
-      throw new Error(completion.errorMessage ?? "Planner failed");
+    let agentResult: PlannerAgentResult;
+    try {
+      agentResult = await this.deps.plannerAgentService.resumeSession(conversationId, userReply);
+    } catch {
+      return { plan: null, runs: [], pendingClarification: false };
     }
 
-    console.log("[planner raw output]", JSON.stringify(text));
-    return parsePlannerJson(text) ?? fallbackPlan(prompt);
+    if (agentResult.status === "pending") {
+      return { plan: null, runs: [], pendingClarification: true };
+    }
+
+    // Session is done — run the full plan creation flow
+    const resolvedPlan = agentResult.plan;
+    const originalPlannerAgentService = this.deps.plannerAgentService;
+    // Temporarily replace plannerAgentService to force the test-injection path
+    (this.deps as Record<string, unknown>).plannerAgentService = undefined;
+    (this.deps as Record<string, unknown>).plan = async () => resolvedPlan;
+    try {
+      const result = await this.orchestrateConversation(conversationId, resolvedPlan.summary, sourceMessageId);
+      return result;
+    } finally {
+      (this.deps as Record<string, unknown>).plannerAgentService = originalPlannerAgentService;
+      delete (this.deps as Record<string, unknown>).plan;
+    }
   }
 
   private matchAgent(task: PlannerTask, agents: AgentRecord[]): AgentRecord | null {

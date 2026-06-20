@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createTestHarness, waitFor } from "./helpers.js";
 
 const harnesses: Array<Awaited<ReturnType<typeof createTestHarness>>> = [];
@@ -371,9 +371,17 @@ afterEach(async () => {
 });
 
 describe("messages.service history helpers", () => {
+  let harness: Awaited<ReturnType<typeof createTestHarness>>;
+
+  beforeAll(async () => {
+    harness = await createTestHarness();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+  });
+
   it("getLastCompletedPlanSummary returns null when no completed plans exist", async () => {
-    const harness = await createTestHarness();
-    helperHarnesses.push(harness);
     const conversation = await harness.client.post("/conversations", { title: "h1", type: "single" });
     const conversationId = conversation.json().id;
 
@@ -382,8 +390,6 @@ describe("messages.service history helpers", () => {
   });
 
   it("getLastCompletedPlanSummary returns summary of most recent completed plan", async () => {
-    const harness = await createTestHarness();
-    helperHarnesses.push(harness);
     const conversation = await harness.client.post("/conversations", { title: "h2", type: "single" });
     const conversationId = conversation.json().id;
     const svc = harness.server.app.locals.messagesService;
@@ -415,8 +421,6 @@ describe("messages.service history helpers", () => {
   });
 
   it("getRecentUserMessages returns last N user messages excluding queued_prompt", async () => {
-    const harness = await createTestHarness();
-    helperHarnesses.push(harness);
     const conversation = await harness.client.post("/conversations", { title: "h3", type: "single" });
     const conversationId = conversation.json().id;
     const svc = harness.server.app.locals.messagesService;
@@ -432,8 +436,6 @@ describe("messages.service history helpers", () => {
   });
 
   it("listQueuedPrompts returns only unconsumed queued_prompt messages", async () => {
-    const harness = await createTestHarness();
-    helperHarnesses.push(harness);
     const conversation = await harness.client.post("/conversations", { title: "h4", type: "single" });
     const conversationId = conversation.json().id;
     const svc = harness.server.app.locals.messagesService;
@@ -447,8 +449,6 @@ describe("messages.service history helpers", () => {
   });
 
   it("markQueuedPromptConsumed sets consumed=true on the message", async () => {
-    const harness = await createTestHarness();
-    helperHarnesses.push(harness);
     const conversation = await harness.client.post("/conversations", { title: "h5", type: "single" });
     const conversationId = conversation.json().id;
     const svc = harness.server.app.locals.messagesService;

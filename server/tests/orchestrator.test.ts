@@ -620,31 +620,7 @@ describe("Minimal orchestrator", () => {
     expect(progressMsg.content).toContain("写接口");
   });
 
-  it("@slug prefix dispatches directly to named agent without planning", async () => {
-    let plannerCalled = false;
-    const harness = await createTestHarness({
-      orchestratorPlanner: async () => {
-        plannerCalled = true;
-        return { summary: "should not run", tasks: [] };
-      },
-    });
-    harnesses.push(harness);
-    const agentId = harness.server.app.locals.agentsService.getDefaultAgent()!.id;
-    const conversation = await harness.client.post("/conversations", { title: "Direct", type: "single" });
-    const conversationId = conversation.json().id;
-    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
-
-    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, {
-      prompt: "@claude-code 写一个排序函数",
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(plannerCalled).toBe(false);
-    expect(response.json().run).toBeDefined();
-    expect(response.json().run.agent_id).toBe(agentId);
-  });
-
-  it("@slug falls through to normal orchestrate when agent is not found", async () => {
+  it("@slug prefix dispatches directly and nonexistent slug falls through", async () => {
     let plannerCalled = false;
     const harness = await createTestHarness({
       orchestratorPlanner: async () => {
@@ -656,17 +632,31 @@ describe("Minimal orchestrator", () => {
       },
     });
     harnesses.push(harness);
-    const conversation = await harness.client.post("/conversations", { title: "Fallthrough", type: "single" });
-    const conversationId = conversation.json().id;
-    await harness.client.post(`/conversations/${conversationId}/workspace`, { rootPath: harness.workspacePath });
+    const agentId = harness.server.app.locals.agentsService.getDefaultAgent()!.id;
 
-    const response = await harness.client.post(`/conversations/${conversationId}/orchestrate`, {
+    // @slug prefix bypasses planner
+    const conv1 = await harness.client.post("/conversations", { title: "Direct", type: "single" });
+    const conv1Id = conv1.json().id;
+    await harness.client.post(`/conversations/${conv1Id}/workspace`, { rootPath: harness.workspacePath });
+    const response1 = await harness.client.post(`/conversations/${conv1Id}/orchestrate`, {
+      prompt: "@claude-code 写一个排序函数",
+    });
+    expect(response1.statusCode).toBe(200);
+    expect(plannerCalled).toBe(false);
+    expect(response1.json().run).toBeDefined();
+    expect(response1.json().run.agent_id).toBe(agentId);
+
+    // @nonexistent-agent falls through to normal orchestrate
+    plannerCalled = false;
+    const conv2 = await harness.client.post("/conversations", { title: "Fallthrough", type: "single" });
+    const conv2Id = conv2.json().id;
+    await harness.client.post(`/conversations/${conv2Id}/workspace`, { rootPath: harness.workspacePath });
+    const response2 = await harness.client.post(`/conversations/${conv2Id}/orchestrate`, {
       prompt: "@nonexistent-agent 做点什么",
     });
-
-    expect(response.statusCode).toBe(200);
+    expect(response2.statusCode).toBe(200);
     expect(plannerCalled).toBe(true);
-    expect(response.json().plan).toBeDefined();
+    expect(response2.json().plan).toBeDefined();
   });
 
   it("queues prompt and returns queued=true when a plan is already watching", async () => {

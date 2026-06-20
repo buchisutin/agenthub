@@ -17,10 +17,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-process.on("SIGINT", () => {
-  process.exit(130);
-});
-
 async function main() {
   if (resumeSessionId && resumeSessionId !== SESSION_ID) {
     process.stdout.write(

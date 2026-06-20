@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { ChildProcess } from "node:child_process";
@@ -243,6 +244,56 @@ describe("PreviewService", () => {
     expect(spawnProcessMock).toHaveBeenCalledTimes(1);
   });
 
+  it("starts and reuses one preview for the bound workspace", async () => {
+    const { harness, conversationId } = await createCompletedRunHarness();
+    fs.writeFileSync(
+      path.join(harness.workspacePath, "package.json"),
+      JSON.stringify({ scripts: { dev: "vite" } }),
+    );
+    const workspace = harness.server.app.locals.workspacesService
+      .getByConversationId(conversationId);
+    const previewService = new PreviewService(
+      harness.server.app.locals.runsService,
+      harness.server.app.locals.workspacesService,
+      { spawnProcess, waitForUrl, isPortAvailable },
+    );
+
+    const first = await previewService.startPreviewForWorkspace(workspace.id);
+    const second = await previewService.startPreviewForWorkspace(workspace.id);
+
+    expect(first).toEqual(second);
+    expect(spawnProcessMock).toHaveBeenCalledTimes(1);
+    expect(spawnProcessMock.mock.calls[0][2].cwd).toBe(harness.workspacePath);
+  });
+
+  it("starts workspace preview through the workspace route", async () => {
+    const harness = await createTestHarness({
+      previewServiceDeps: { spawnProcess, waitForUrl, isPortAvailable },
+    });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", {
+      title: "Workspace preview route",
+      type: "single",
+    });
+    const conversationId = conversation.json().id;
+    await harness.client.post(`/conversations/${conversationId}/workspace`, {
+      rootPath: harness.workspacePath,
+    });
+    fs.writeFileSync(
+      path.join(harness.workspacePath, "package.json"),
+      JSON.stringify({ scripts: { dev: "vite" } }),
+    );
+    const workspace = harness.server.app.locals.workspacesService
+      .getByConversationId(conversationId);
+
+    const response = await harness.client.post(
+      `/workspaces/${workspace.id}/preview/start`,
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().url).toMatch(/^http:\/\/127\.0\.0\.1:/);
+  });
+
   it("cleans registry on stop", async () => {
     const { harness, runId } = await createCompletedRunHarness();
     fs.writeFileSync(
@@ -385,6 +436,7 @@ describe("PreviewService", () => {
       path.join(harness.workspacePath, "package.json"),
       JSON.stringify({ scripts: { dev: "vite" } }),
     );
+    execSync("git add . && git commit -m 'add package.json'", { cwd: harness.workspacePath });
 
     const userMessage = await harness.client.post(`/conversations/${conversationId}/messages`, {
       content: "@orchestrator 做一个登录页",

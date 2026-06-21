@@ -185,4 +185,70 @@ describe("DeployService", () => {
     expect(status.statusCode).toBe(200);
     expect(status.json().command).toBe("npm run build");
   });
+
+  it("runs one deployment from the bound workspace", async () => {
+    const { harness, runId } = await createCompletedRunHarness();
+    fs.writeFileSync(
+      path.join(harness.workspacePath, "package.json"),
+      JSON.stringify({ scripts: { build: "vite build" } }),
+    );
+    const run = harness.server.app.locals.runsService.getById(runId);
+    const child = new MockChildProcess();
+    const spawnProcess = vi.fn(() => child as unknown as ChildProcess);
+    const deployService = new DeployService(
+      harness.server.app.locals.runsService,
+      harness.server.app.locals.workspacesService,
+      { spawnProcess },
+    );
+
+    const scripts = deployService.getScriptsForWorkspace(run.workspace_id);
+    const first = deployService.startDeployForWorkspace(run.workspace_id, "build");
+    const second = deployService.startDeployForWorkspace(run.workspace_id, "build");
+
+    expect(scripts).toEqual({
+      workspaceId: run.workspace_id,
+      scripts: ["build"],
+      defaultScript: "build",
+    });
+    expect(first.workspaceId).toBe(run.workspace_id);
+    expect(second).toEqual(first);
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "npm",
+      ["run", "build"],
+      expect.objectContaining({ cwd: harness.workspacePath }),
+    );
+  });
+
+  it("exposes workspace deploy routes", async () => {
+    const child = new MockChildProcess();
+    const spawnProcess = vi.fn(() => child as unknown as ChildProcess);
+    const harness = await createTestHarness({ deployServiceDeps: { spawnProcess } });
+    harnesses.push(harness);
+    const conversation = await harness.client.post("/conversations", {
+      title: "Workspace deploy routes",
+      type: "single",
+    });
+    const bound = await harness.client.post(
+      `/conversations/${conversation.json().id}/workspace`,
+      { rootPath: harness.workspacePath },
+    );
+    const workspaceId = bound.json().id;
+    fs.writeFileSync(
+      path.join(harness.workspacePath, "package.json"),
+      JSON.stringify({ scripts: { build: "vite build" } }),
+    );
+
+    const scripts = await harness.client.get(`/workspaces/${workspaceId}/deploy/scripts`);
+    const start = await harness.client.post(`/workspaces/${workspaceId}/deploy/start`, {
+      script: "build",
+    });
+    const status = await harness.client.get(`/workspaces/${workspaceId}/deploy`);
+
+    expect(scripts.statusCode).toBe(200);
+    expect(scripts.json().workspaceId).toBe(workspaceId);
+    expect(start.statusCode).toBe(200);
+    expect(start.json().workspaceId).toBe(workspaceId);
+    expect(status.json().command).toBe("npm run build");
+  });
 });

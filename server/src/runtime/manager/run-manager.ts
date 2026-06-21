@@ -90,6 +90,7 @@ function buildAgentRunPrompt(input: {
 export class RunManager {
   private readonly registry = new ProcessRegistry();
   private readonly textBuffers = new Map<string, string>();
+  private readonly bootstrapTasks = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: RunManagerDependencies) {}
 
@@ -172,7 +173,7 @@ export class RunManager {
 
     const taskId = input.taskId ?? conversation.task_id;
     const task = taskId ? this.deps.tasksService.getById(taskId) : null;
-    void this.createRunWorkspaceAndBootstrap(run.id, workspace.id, workspace.root_path, {
+    const bootstrapTask = this.createRunWorkspaceAndBootstrap(run.id, workspace.id, workspace.root_path, {
       conversationId: input.conversationId,
       prompt: input.prompt,
       resumeSessionId:
@@ -187,6 +188,8 @@ export class RunManager {
       task,
       conversation,
     });
+    this.bootstrapTasks.set(run.id, bootstrapTask);
+    void bootstrapTask.finally(() => this.bootstrapTasks.delete(run.id));
 
     return this.deps.runsService.getDetail(run.id)!;
   }
@@ -245,9 +248,33 @@ export class RunManager {
   }
 
   async close(): Promise<void> {
+    await Promise.allSettled(this.bootstrapTasks.values());
     await Promise.allSettled(
       this.registry.values().map((handle) => handle.completion),
     );
+  }
+
+  async stopConversationRuns(conversationId: string): Promise<void> {
+    const activeRuns = this.deps.runsService
+      .listByConversationId(conversationId)
+      .filter((run) => run.status === "queued" || run.status === "running");
+
+    await Promise.allSettled(activeRuns.map(async (run) => {
+      const bootstrapTask = this.bootstrapTasks.get(run.id);
+      if (bootstrapTask) await bootstrapTask;
+
+      const current = this.deps.runsService.getById(run.id);
+      if (current?.status === "queued" || current?.status === "running") {
+        try {
+          await this.interruptRun(run.id);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "Run is not active") throw error;
+        }
+      }
+
+      const handle = this.registry.get(run.id);
+      if (handle) await handle.completion;
+    }));
   }
 
   async interruptRun(runId: string): Promise<RunDetail> {

@@ -87,7 +87,7 @@ export function Sidebar({ mode, onCollapse, onExpand, onFloatingMouseEnter, onFl
           ? 'fixed left-0 top-3 z-50 h-[calc(100%-24px)] w-72 flex min-h-0 flex-col overflow-hidden rounded-r-xl animate-slide-in'
           : 'w-72 flex-shrink-0 flex min-h-0 flex-col h-full overflow-hidden rounded-xl'
       }
-      style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
+      style={{ backgroundColor: '#FCF8F5' }}
       onMouseEnter={isFloating ? onFloatingMouseEnter : undefined}
       onMouseLeave={isFloating ? onFloatingMouseLeave : undefined}
     >
@@ -198,8 +198,8 @@ function ConversationItem({
     <div
       className="w-full rounded-lg px-3 py-3 text-left transition-colors flex items-center gap-2 group"
       style={{
-        backgroundColor: active ? '#EFF8FF' : 'transparent',
-        boxShadow: active ? 'inset 2px 0 0 var(--app-accent)' : undefined,
+        backgroundColor: active ? '#f0f5f0' : 'transparent',
+        border: active ? '1.5px solid #A8CCB5' : '1.5px solid transparent',
       }}
       onMouseEnter={(e) => {
         if (!active) {

@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ChildProcess, spawn } from "node:child_process";
-import { DeployRecord, DeployScriptsResponse } from "../../shared/types.js";
+import {
+  DeployRecord,
+  DeployScriptsResponse,
+  WorkspaceDeployRecord,
+  WorkspaceDeployScriptsResponse,
+} from "../../shared/types.js";
 import { RunsService } from "../runs/runs.service.js";
 import { WorkspacesService } from "../workspaces/workspaces.service.js";
 
@@ -72,6 +77,7 @@ function chooseDefaultScript(scripts: string[]): string | null {
 
 export class DeployService {
   private readonly deploys = new Map<string, DeployRecord & { process?: ChildProcess }>();
+  private readonly workspaceDeploys = new Map<string, WorkspaceDeployRecord & { process?: ChildProcess }>();
   private readonly spawnProcess: SpawnProcess;
 
   constructor(
@@ -90,6 +96,75 @@ export class DeployService {
       scripts,
       defaultScript: chooseDefaultScript(scripts),
     };
+  }
+
+  getScriptsForWorkspace(workspaceId: string): WorkspaceDeployScriptsResponse {
+    const workspacePath = this.resolveBaseWorkspacePath(workspaceId);
+    const scripts = Object.keys(readPackageScripts(workspacePath) ?? {});
+    return {
+      workspaceId,
+      scripts,
+      defaultScript: chooseDefaultScript(scripts),
+    };
+  }
+
+  startDeployForWorkspace(workspaceId: string, script?: string): WorkspaceDeployRecord {
+    const existing = this.workspaceDeploys.get(workspaceId);
+    if (existing?.status === "running" && existing.process?.exitCode === null) {
+      return this.publicWorkspaceRecord(existing);
+    }
+
+    const workspacePath = this.resolveBaseWorkspacePath(workspaceId);
+    const scripts = readPackageScripts(workspacePath);
+    if (!scripts) throw new Error("No package.json scripts found");
+    const availableScripts = Object.keys(scripts);
+    const selectedScript = script ?? chooseDefaultScript(availableScripts);
+    if (!selectedScript || !availableScripts.includes(selectedScript)) {
+      throw new Error("Deploy script is not available");
+    }
+
+    const process = this.spawnProcess("npm", ["run", selectedScript], {
+      cwd: workspacePath,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const record: WorkspaceDeployRecord & { process?: ChildProcess } = {
+      workspaceId,
+      status: "running",
+      script: selectedScript,
+      command: `npm run ${selectedScript}`,
+      logs: [],
+      exitCode: null,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      errorMessage: null,
+      process,
+    };
+    this.workspaceDeploys.set(workspaceId, record);
+
+    process.stdout?.on("data", (chunk: Buffer | string) => {
+      record.logs.push({ stream: "stdout", chunk: chunk.toString(), at: new Date().toISOString() });
+    });
+    process.stderr?.on("data", (chunk: Buffer | string) => {
+      record.logs.push({ stream: "stderr", chunk: chunk.toString(), at: new Date().toISOString() });
+    });
+    process.once("error", (error) => {
+      record.status = "failed";
+      record.finishedAt = new Date().toISOString();
+      record.errorMessage = error instanceof Error ? error.message : "Deploy failed";
+    });
+    process.once("exit", (code) => {
+      record.status = code === 0 ? "succeeded" : "failed";
+      record.exitCode = code;
+      record.finishedAt = new Date().toISOString();
+      if (code !== 0) record.errorMessage = `Deploy exited with code ${code}`;
+    });
+
+    return this.publicWorkspaceRecord(record);
+  }
+
+  getDeployForWorkspace(workspaceId: string): WorkspaceDeployRecord | null {
+    const record = this.workspaceDeploys.get(workspaceId);
+    return record ? this.publicWorkspaceRecord(record) : null;
   }
 
   startDeploy(runId: string, script?: string): DeployRecord {
@@ -173,6 +248,12 @@ export class DeployService {
       }
     }
     this.deploys.clear();
+    for (const record of this.workspaceDeploys.values()) {
+      if (record.status === "running" && record.process?.exitCode === null) {
+        record.process.kill();
+      }
+    }
+    this.workspaceDeploys.clear();
   }
 
   private resolveWorkspacePath(runId: string): string {
@@ -223,5 +304,12 @@ export class DeployService {
       ...rest,
       logs: [...rest.logs],
     };
+  }
+
+  private publicWorkspaceRecord(
+    record: WorkspaceDeployRecord & { process?: ChildProcess },
+  ): WorkspaceDeployRecord {
+    const { process: _process, ...rest } = record;
+    return { ...rest, logs: [...rest.logs] };
   }
 }

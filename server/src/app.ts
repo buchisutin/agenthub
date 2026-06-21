@@ -59,13 +59,14 @@ export interface AgentHubServerOptions {
   workspaceIsolationService?: WorkspaceIsolationService;
   enableWorkspaceIsolation?: boolean;
   runtimeRegistry?: RuntimeRegistry;
+  slowRequestMs?: number | null;
 }
 
 export function createAgentHubServer(
   overrides: Partial<EnvConfig> = {},
   options: AgentHubServerOptions = {},
 ): AgentHubServer {
-  const SLOW_REQUEST_MS = 200;
+  const slowRequestMs = options.slowRequestMs === undefined ? 200 : options.slowRequestMs;
   const env = getEnvConfig(overrides);
   const database = new DatabaseClient(env.dbPath);
   const tasksService = new TasksService(database);
@@ -133,7 +134,7 @@ export function createAgentHubServer(
     const startedAt = Date.now();
     res.on("finish", () => {
       const durationMs = Date.now() - startedAt;
-      if (durationMs < SLOW_REQUEST_MS) {
+      if (slowRequestMs === null || durationMs < slowRequestMs) {
         return;
       }
       console.log(
@@ -264,6 +265,7 @@ export function createAgentHubServer(
     runsService,
     approvalService,
     database,
+    runManager,
   }));
   app.use("/conversations", createMessagesRouter(conversationsService, messagesService));
   app.use("/", createWorkspacesRouter(conversationsService, workspacesService, workspaceDiffService));

@@ -31,6 +31,7 @@ const baseInput = {
   workspacePath: "/tmp/test",
   workspaceStatus: {
     state: "clean" as const,
+    gitRoot: null,
     dirtyFilesCount: 0,
     dirtyFilesSample: [],
     lastCommit: null,

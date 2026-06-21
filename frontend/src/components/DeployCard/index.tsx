@@ -18,28 +18,30 @@ function statusVariant(status: DeployRecord['status']) {
 }
 
 export function DeployCard({ runId }: { runId: string }) {
-  const [scripts, setScripts] = useState<DeployScriptsResponse | null>(null);
-  const [selectedScript, setSelectedScript] = useState<string>('build');
+  const [scriptsResult, setScriptsResult] = useState<{
+    runId: string;
+    data: DeployScriptsResponse | null;
+    error: string | null;
+  }>({ runId: '', data: null, error: null });
   const [deploy, setDeploy] = useState<DeployRecord | null>(null);
-  const [loadingScripts, setLoadingScripts] = useState(true);
   const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingScripts(true);
-    setError(null);
     api.getRunDeployScripts(runId)
       .then((nextScripts) => {
         if (cancelled) return;
-        setScripts(nextScripts);
-        setSelectedScript(nextScripts.defaultScript ?? nextScripts.scripts[0] ?? 'build');
+        setScriptsResult({ runId, data: nextScripts, error: null });
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : '加载 Deploy scripts 失败');
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingScripts(false);
+        if (!cancelled) {
+          setScriptsResult({
+            runId,
+            data: null,
+            error: e instanceof Error ? e.message : '加载 Deploy scripts 失败',
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -66,20 +68,25 @@ export function DeployCard({ runId }: { runId: string }) {
     () => deploy?.logs.map((entry) => entry.chunk).join('').trimEnd() ?? '',
     [deploy],
   );
-  const deployScript = scripts?.scripts.includes('build') ? 'build' : selectedScript;
+  const loadingScripts = scriptsResult.runId !== runId;
+  const scripts = loadingScripts ? null : scriptsResult.data;
+  const error = actionError ?? (loadingScripts ? null : scriptsResult.error);
+  const deployScript = scripts?.scripts.includes('build')
+    ? 'build'
+    : scripts?.defaultScript ?? scripts?.scripts[0] ?? 'build';
   const commandLabel = deploy?.command ?? (deployScript ? `npm run ${deployScript}` : 'package.json scripts');
   const showTerminal = starting || deploy?.status === 'running' || logText.length > 0;
 
   async function handleRunDeploy() {
     setStarting(true);
-    setError(null);
+    setActionError(null);
     try {
       const started = await api.startRunDeploy(runId, deployScript);
       setDeploy(started);
       const latest = await api.getRunDeploy(runId);
       if (latest) setDeploy(latest);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Deploy failed');
+      setActionError(e instanceof Error ? e.message : 'Deploy failed');
     } finally {
       setStarting(false);
     }

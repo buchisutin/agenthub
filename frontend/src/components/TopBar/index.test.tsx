@@ -137,6 +137,71 @@ describe('TopBar', () => {
     mockRuntimeApis();
   });
 
+  it('uses compact corners and a thin border for project actions', () => {
+    const state: AppState = {
+      conversations: [],
+      selectedConvId: null,
+      agents: [],
+      workspaces: {},
+      messagesByConversation: {},
+      timeline: {},
+      plansByConversation: {},
+      activeRunIdsByConversation: {},
+      connected: true,
+      loadingConvs: false,
+      loadingAgents: false,
+      loadingTimeline: false,
+      error: null,
+    };
+
+    render(
+      <AppContext.Provider value={{ state, dispatch: vi.fn<Dispatch<Action>>() }}>
+        <TopBar onOpenProjectArtifact={vi.fn()} />
+      </AppContext.Provider>,
+    );
+
+    for (const name of ['代码改动', '网页预览', '部署', 'Agents']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.classList.contains('rounded-lg')).toBe(true);
+      expect(button.classList.contains('rounded-full')).toBe(false);
+      expect(button.style.borderWidth).toBe('0.5px');
+    }
+  });
+
+  it('routes top controls to project-scoped tabs and shows the file count', () => {
+    const state: AppState = {
+      conversations: [],
+      selectedConvId: null,
+      agents: [],
+      workspaces: {},
+      messagesByConversation: {},
+      timeline: {},
+      plansByConversation: {},
+      activeRunIdsByConversation: {},
+      connected: true,
+      loadingConvs: false,
+      loadingAgents: false,
+      loadingTimeline: false,
+      error: null,
+    };
+    const onOpenProjectArtifact = vi.fn();
+    render(
+      <AppContext.Provider value={{ state, dispatch: vi.fn<Dispatch<Action>>() }}>
+        <TopBar onOpenProjectArtifact={onOpenProjectArtifact} projectFileCount={3} />
+      </AppContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '代码改动 3' }));
+    fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
+    fireEvent.click(screen.getByRole('button', { name: '部署' }));
+
+    expect(onOpenProjectArtifact.mock.calls).toEqual([
+      ['diff'],
+      ['preview'],
+      ['deploy'],
+    ]);
+  });
+
   it('shows the running run count for the selected conversation', () => {
     const state: AppState = {
       conversations: [

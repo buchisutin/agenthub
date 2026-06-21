@@ -215,6 +215,44 @@ export class PreviewService {
     }
   }
 
+  async startPreviewForWorkspace(workspaceId: string): Promise<PreviewStartResponse> {
+    const targetKey = `workspace:${workspaceId}`;
+    const existing = this.previews.get(targetKey);
+    if (existing && existing.process.exitCode === null) {
+      return { url: existing.url, port: existing.port };
+    }
+    if (existing) this.previews.delete(targetKey);
+
+    const workspace = this.workspacesService.getById(workspaceId);
+    if (!workspace) throw new Error("Workspace not found");
+    const workspacePath = path.resolve(workspace.root_path);
+    if (!fileExists(workspacePath) || !isDirectory(workspacePath)) {
+      throw new Error("Workspace path is invalid");
+    }
+
+    const port = await this.findAvailablePort();
+    const url = `http://127.0.0.1:${port}`;
+    const process = this.spawnPreviewProcess(workspacePath, port);
+    const preview: PreviewRecord = {
+      runId: targetKey,
+      port,
+      url,
+      process,
+      workspacePath,
+      startedAt: new Date().toISOString(),
+    };
+    this.previews.set(targetKey, preview);
+
+    try {
+      await this.waitForUrl(url, 30000, process);
+      return { url, port };
+    } catch (error) {
+      this.killPreviewProcess(process);
+      this.previews.delete(targetKey);
+      throw error;
+    }
+  }
+
   async stopPreviewForRun(runId: string): Promise<{ ok: true }> {
     const preview = this.previews.get(runId);
     if (!preview) {
@@ -223,6 +261,15 @@ export class PreviewService {
 
     this.killPreviewProcess(preview.process);
     this.previews.delete(runId);
+    return { ok: true };
+  }
+
+  async stopPreviewForWorkspace(workspaceId: string): Promise<{ ok: true }> {
+    const targetKey = `workspace:${workspaceId}`;
+    const preview = this.previews.get(targetKey);
+    if (!preview) return { ok: true };
+    this.killPreviewProcess(preview.process);
+    this.previews.delete(targetKey);
     return { ok: true };
   }
 

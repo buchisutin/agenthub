@@ -227,6 +227,31 @@ export interface FileChange {
   source: 'snapshot' | 'read_tool' | 'tool_event' | 'filesystem';
 }
 
+export interface ProjectFileChange extends FileChange {
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface WorkspaceDiffResponse {
+  workspaceId: string;
+  baseRef: 'HEAD';
+  files: ProjectFileChange[];
+  summary: {
+    files: number;
+    additions: number;
+    deletions: number;
+  };
+}
+
+export interface WorkspaceChangedEvent {
+  type: 'workspace_changed';
+  eventId?: string;
+  conversationId: string;
+  workspaceId: string;
+  reason: 'merge_completed';
+}
+
 export interface PreviewState {
   runId: string;
   port: number;
@@ -264,6 +289,16 @@ export interface DeployRecord {
   finishedAt: string | null;
   errorMessage: string | null;
 }
+
+export interface WorkspaceDeployScriptsResponse {
+  workspaceId: string;
+  scripts: string[];
+  defaultScript: string | null;
+}
+
+export type WorkspaceDeployRecord = Omit<DeployRecord, 'runId'> & {
+  workspaceId: string;
+};
 
 export interface TaskPlanItem {
   index: number;
@@ -538,7 +573,14 @@ export interface FileChangedEvent extends RuntimeBaseEvent {
 export interface ApprovalRequiredEvent extends RuntimeBaseEvent {
   type: 'approval_required';
   reason: string;
+  approvalId?: string;
   rawEvent?: Record<string, unknown>;
+}
+
+export interface ApprovalStatusChangedEvent extends RuntimeBaseEvent {
+  type: 'approval_status_changed';
+  approvalId: string;
+  status: 'approved' | 'rejected' | 'cancelled' | 'executed' | 'failed';
 }
 
 export interface RunStatusChangedEvent extends RuntimeBaseEvent {
@@ -595,6 +637,7 @@ export type RuntimeSocketEvent =
   | CommandOutputEvent
   | FileChangedEvent
   | ApprovalRequiredEvent
+  | ApprovalStatusChangedEvent
   | RunStatusChangedEvent
   | RunCompletedEvent
   | RunFailedEvent
@@ -630,7 +673,10 @@ export interface ApprovalRequestBlock {
   kind: 'approval_request';
   id: string;
   reason: string;
-  status: 'pending';
+  approvalId: string;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'executed' | 'failed';
 }
 
 export interface FileChangeIndicatorBlock {

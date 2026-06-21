@@ -4,6 +4,44 @@ import path from "node:path";
 import { spawn, spawnSync, ChildProcessByStdio } from "node:child_process";
 import readline from "node:readline";
 import { Readable } from "node:stream";
+
+// Codex hook response format differs from Claude Code:
+// allow → {} (empty object)
+// deny  → {"permissionDecision":"deny","stopReason":"..."}
+const CODEX_HOOK_SCRIPT = `#!/bin/bash
+# AgentHub HITL hook for Codex CLI
+INPUT=$(cat)
+
+RESPONSE=$(echo "$INPUT" | curl -s -X POST \\
+  -H "Content-Type: application/json" \\
+  -H "X-Run-Id: $AGENTHUB_RUN_ID" \\
+  -H "X-Conv-Id: $AGENTHUB_CONV_ID" \\
+  --data-binary @- \\
+  "$AGENTHUB_API_URL/internal/hook/approval")
+
+APPROVAL_ID=$(echo "$RESPONSE" | grep -o '"approvalId":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "$APPROVAL_ID" ]; then
+  echo '{"permissionDecision":"deny","stopReason":"Failed to create approval request"}'
+  exit 0
+fi
+
+for i in $(seq 1 120); do
+  STATUS=$(curl -s "$AGENTHUB_API_URL/approvals/$APPROVAL_ID" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ "$STATUS" != "pending" ]; then
+    if [ "$STATUS" = "approved" ]; then
+      echo '{}'
+    else
+      echo '{"permissionDecision":"deny","stopReason":"User rejected this tool call"}'
+    fi
+    exit 0
+  fi
+  sleep 5
+done
+
+echo '{"permissionDecision":"deny","stopReason":"Approval timed out"}'
+exit 0
+`;
 import {
   AgentRuntime,
   RuntimeCompletion,
@@ -37,18 +75,39 @@ export class CodexCliRuntime implements AgentRuntime {
       ? (input.agentConfig.baseArgs as string[])
       : this.env.codexBaseArgs;
 
+    const hitlEnabled =
+      input.agentConfig?.hitlEnabled === true ||
+      (input.agentConfig?.hitlEnabled === undefined && this.env.hitlEnabled);
+
+    // Replace -a never with full-auto so Codex doesn't block on stdin;
+    // our hook handles the approval gate instead.
+    const effectiveBaseArgs = hitlEnabled
+      ? baseArgs.map((a, i, arr) =>
+          a === "never" && arr[i - 1] === "-a" ? "full-auto" : a,
+        )
+      : baseArgs;
+
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agenthub-codex-"));
     const outputFile = path.join(tempDir, "last-message.txt");
 
-    const args = [...baseArgs, "-C", input.workspacePath, "exec"];
+    const args = [...effectiveBaseArgs, "-C", input.workspacePath, "exec"];
     if (input.resumeSessionId) {
       args.push("resume", "--json", "--skip-git-repo-check", "-o", outputFile, input.resumeSessionId, input.prompt);
     } else {
       args.push("--json", "--skip-git-repo-check", "-o", outputFile, input.prompt);
     }
 
+    const spawnEnv = { ...process.env };
+    if (hitlEnabled) {
+      this.writeCodexHitlHook(input.workspacePath);
+      spawnEnv.AGENTHUB_RUN_ID = input.runId;
+      spawnEnv.AGENTHUB_CONV_ID = input.conversationId;
+      spawnEnv.AGENTHUB_API_URL = this.env.apiBaseUrl;
+    }
+
     const child = spawn(command, args, {
       cwd: input.workspacePath,
+      env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.activeRuns.set(input.runId, child);
@@ -271,6 +330,42 @@ export class CodexCliRuntime implements AgentRuntime {
       version: (stdout || stderr || "").trim() || null,
       executablePath,
     };
+  }
+
+  private writeCodexHitlHook(workspacePath: string): void {
+    const hooksDir = path.join(workspacePath, ".codex", "hooks");
+    const scriptPath = path.join(hooksDir, "agenthub-approval.sh");
+    const configPath = path.join(workspacePath, ".codex", "hooks.json");
+
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(scriptPath, CODEX_HOOK_SCRIPT, { mode: 0o755 });
+
+    const config = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash|shell|exec",
+            hooks: [
+              {
+                type: "command",
+                command: scriptPath,
+                timeout: 600,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      // no existing config
+    }
+
+    const merged = { ...existing, hooks: config.hooks };
+    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
   }
 
   private readLastMessage(outputFile: string): string | null {

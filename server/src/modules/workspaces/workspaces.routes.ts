@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import { WorkspacesService } from "./workspaces.service.js";
+import { WorkspaceDiffService } from "./workspace-diff.service.js";
 
 export function createWorkspacesRouter(
   conversationsService: ConversationsService,
   workspacesService: WorkspacesService,
+  workspaceDiffService: WorkspaceDiffService,
 ): Router {
   const router = Router({ mergeParams: true });
 
@@ -35,6 +37,16 @@ export function createWorkspacesRouter(
 
     const result = workspacesService.validateWorkspacePath(rootPath);
     res.json(result);
+  });
+
+  router.get("/workspaces/:workspaceId/file-changes", (req, res) => {
+    try {
+      res.json(workspaceDiffService.getFileChanges(req.params.workspaceId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load workspace changes";
+      const status = /not found/i.test(message) ? 404 : /git|workspace path/i.test(message) ? 400 : 500;
+      res.status(status).json({ detail: message });
+    }
   });
 
   router.post("/conversations/:conversationId/workspace", (req, res) => {

@@ -219,6 +219,15 @@ export class MergeService {
       approvalId: existing?.approvalId ?? null,
     });
 
+    if (conflicts.length === 0 && appliedFiles.length > 0) {
+      this.deps.onWorkspaceChanged?.({
+        type: "workspace_changed",
+        conversationId: run.conversation_id,
+        workspaceId: run.workspace_id,
+        reason: "merge_completed",
+      });
+    }
+
     return conflicts.length > 0
       ? { status: "needs_approval", merge }
       : { status: "merged", merge };
@@ -312,7 +321,7 @@ export class MergeService {
       appliedFiles.push(conflict.filePath);
     }
 
-    return this.persist({
+    const resolved = this.persist({
       runId: merge.runId,
       conversationId: merge.conversationId,
       taskId: merge.taskId,
@@ -324,6 +333,15 @@ export class MergeService {
       approvalId: merge.approvalId,
       mergedAt: remainingConflicts.length > 0 ? null : nowIso(),
     });
+    if (remainingConflicts.length === 0 && appliedFiles.length > 0) {
+      this.deps.onWorkspaceChanged?.({
+        type: "workspace_changed",
+        conversationId: run.conversation_id,
+        workspaceId: run.workspace_id,
+        reason: "merge_completed",
+      });
+    }
+    return resolved;
   }
 
   private persist(input: PersistMergeInput): RunMerge {

@@ -9,6 +9,7 @@ import { socketService } from '../services/socket';
 import type {
   Agent,
   ApprovalRequiredEvent,
+  ApprovalStatusChangedEvent,
   Conversation,
   OrchestratorPlanningDoneEvent,
   OrchestratorPlanningStartedEvent,
@@ -23,6 +24,7 @@ import type {
   ToolInputDeltaEvent,
   ToolResultEvent,
   ToolStartedEvent,
+  WorkspaceChangedEvent,
 } from '../types';
 import { initialState, reducer, type Action, type AppState } from './appState';
 import { loadConversationRuntime } from './runtimeActions';
@@ -87,6 +89,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
             convId: event.conversationId,
             runId: event.runId,
             reason: event.reason,
+            approvalId: event.approvalId ?? '',
+            toolName: typeof event.rawEvent?.tool_name === 'string' ? event.rawEvent.tool_name : undefined,
+            toolInput: event.rawEvent?.tool_input as Record<string, unknown> | undefined,
+          },
+        });
+      },
+      onApprovalStatusChanged: (event: ApprovalStatusChangedEvent) => {
+        dispatch({
+          type: 'UPDATE_APPROVAL_STATUS',
+          payload: {
+            convId: event.conversationId,
+            runId: event.runId,
+            approvalId: event.approvalId,
+            status: event.status,
           },
         });
       },
@@ -156,6 +172,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           payload: {
             convId: event.conversationId,
           },
+        });
+      },
+      onWorkspaceChanged: (event: WorkspaceChangedEvent) => {
+        dispatch({
+          type: 'BUMP_WORKSPACE_REVISION',
+          payload: { workspaceId: event.workspaceId },
         });
       },
     });

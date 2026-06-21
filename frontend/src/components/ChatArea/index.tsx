@@ -6,16 +6,19 @@ import { useApp } from '../../store/useApp';
 import { loadConversationRuntime, startRun } from '../../store/runtimeActions';
 import { api, ApiError } from '../../services/api';
 import { socketService } from '../../services/socket';
+import { PlanCard } from '../PlanCard';
 import { RunCard } from '../RunCard';
+import { ToolApprovalCard } from '../ToolApprovalCard';
 import { ConflictReviewCard } from '../ConflictReviewCard';
 import { TaskDetailDrawer } from '../TaskPanel';
-import { ArtifactPanel, DEFAULT_ARTIFACT_PANEL_WIDTH, type ArtifactTab } from '../ArtifactPanel';
+import { ProjectArtifactPanel, type ProjectArtifactTab } from '../ProjectArtifactPanel';
+import { TaskWorkLogPanel } from '../TaskWorkLogPanel';
 import { TopBar } from '../TopBar';
 import { WorkspaceSetup } from '../WorkspaceSetup';
+import { AlertTriangle, ArrowUp, ChevronDown } from '../ui/LineIcons';
 import { createTimelineItemFromRun } from '../../store/timeline';
-import { Badge } from '../ui/Badge';
 import { normalizeMarkdownTables } from '../../utils/markdown';
-import type { Agent, Message, Mention, PlanCardModel, Task, TaskAssignment, TaskDetail } from '../../types';
+import type { Agent, ChatTimelineItem, Message, Mention, PlanCardModel, TaskDetail } from '../../types';
 
 function slugifyAgentName(name: string) {
   return name
@@ -98,14 +101,10 @@ export function ChatArea() {
   const { state, dispatch } = useApp();
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [showArtifactPanel, setShowArtifactPanel] = useState(false);
-  const [artifactTab, setArtifactTab] = useState<ArtifactTab>('diff');
-  const [selectedArtifactRunId, setSelectedArtifactRunId] = useState<string | null>(null);
-  const [artifactPanelWidth, setArtifactPanelWidth] = useState(DEFAULT_ARTIFACT_PANEL_WIDTH);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [assignments, setAssignments] = useState<TaskAssignment[]>([]);
-  const [loadingTasks, setLoadingTasks] = useState(false);
-  const [taskPanelError, setTaskPanelError] = useState<string | null>(null);
+  const [projectPanelOpen, setProjectPanelOpen] = useState(false);
+  const [projectTab, setProjectTab] = useState<ProjectArtifactTab>('diff');
+  const [selectedLogRunId, setSelectedLogRunId] = useState<string | null>(null);
+  const [projectDiffSummary, setProjectDiffSummary] = useState<{ workspaceId: string; fileCount: number } | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
   const [loadingTaskDetail, setLoadingTaskDetail] = useState(false);
@@ -121,43 +120,52 @@ export function ChatArea() {
   const timeline = useMemo(() => (convId ? state.timeline[convId] ?? [] : []), [convId, state.timeline]);
   const plans = useMemo(() => (convId ? state.plansByConversation[convId] ?? [] : []), [convId, state.plansByConversation]);
   const workspace = useMemo(() => (convId ? state.workspaces[convId] ?? null : null), [convId, state.workspaces]);
+  const workspaceRevision = workspace ? state.workspaceRevisionById?.[workspace.id] ?? 0 : 0;
   const messages = useMemo(() => (convId ? state.messagesByConversation[convId] ?? [] : []), [convId, state.messagesByConversation]);
   const planning = useMemo(() => (convId ? state.planningByConversation?.[convId] ?? null : null), [convId, state.planningByConversation]);
-  const activeRunIds = useMemo(() => (convId ? state.activeRunIdsByConversation[convId] ?? [] : []), [convId, state.activeRunIdsByConversation]);
   const defaultAgentId = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.id ?? state.agents.find((agent) => agent.enabled && agent.adapter_type === 'claude_cli')?.id, [state.agents]);
   const defaultAgentSlug = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.slug ?? null, [state.agents]);
   const runtimeUnavailable = useMemo(() => state.agents.some((agent) => agent.enabled && agent.status === 'unavailable'), [state.agents]);
   const currentConversation = useMemo(() => state.conversations.find((conversation) => conversation.id === convId) ?? null, [convId, state.conversations]);
   const conversationType = currentConversation?.type ?? 'group';
-  const [singleAgentId, setSingleAgentId] = useState<string | null>(null);
+  const [singleAgentSelection, setSingleAgentSelection] = useState<{ convId: string; agentId: string } | null>(null);
+  const singleAgentId = convId && singleAgentSelection?.convId === convId
+    ? singleAgentSelection.agentId
+    : convId
+      ? readSingleAgentId(convId)
+      : null;
   const singleAgent = useMemo(
     () => state.agents.find((agent) => agent.enabled && agent.id === singleAgentId) ?? state.agents.find((agent) => agent.enabled && agent.id === defaultAgentId) ?? state.agents.find((agent) => agent.enabled) ?? null,
     [defaultAgentId, singleAgentId, state.agents],
   );
+  const selectedLogItem = useMemo(
+    () => timeline.find((item) => item.runId === selectedLogRunId) ?? null,
+    [selectedLogRunId, timeline],
+  );
+  const selectedLogTaskTitle = useMemo(
+    () => plans.flatMap((plan) => plan.items).find((item) => item.runId === selectedLogRunId)?.title
+      ?? selectedLogItem?.prompt
+      ?? '工作日志',
+    [plans, selectedLogItem, selectedLogRunId],
+  );
+  const activePanelWidth = projectPanelOpen ? 620 : selectedLogRunId ? 420 : 0;
+  const projectFileCount = projectDiffSummary && workspace?.id && projectDiffSummary.workspaceId === workspace.id
+    ? projectDiffSummary.fileCount
+    : 0;
 
   useEffect(() => {
-    if (!convId || conversationType !== 'single') return;
-    const stored = readSingleAgentId(convId);
-    const fallback = stored ?? defaultAgentId ?? state.agents.find((agent) => agent.enabled)?.id ?? null;
-    setSingleAgentId(fallback);
-  }, [convId, conversationType, defaultAgentId, state.agents]);
-
-  async function loadTasksPanelData(conversationId: string) {
-    setLoadingTasks(true);
-    setTaskPanelError(null);
-    try {
-      const [nextTasks, nextAssignments] = await Promise.all([
-        api.getConversationTasks(conversationId),
-        api.getConversationAssignments(conversationId),
-      ]);
-      setTasks(nextTasks);
-      setAssignments(nextAssignments);
-    } catch (e: unknown) {
-      setTaskPanelError(e instanceof Error ? e.message : '加载任务失败');
-    } finally {
-      setLoadingTasks(false);
-    }
-  }
+    if (!workspace?.id) return;
+    const workspaceId = workspace.id;
+    let cancelled = false;
+    api.getWorkspaceFileChanges(workspaceId)
+      .then((result) => {
+        if (!cancelled) setProjectDiffSummary({ workspaceId, fileCount: result.summary.files });
+      })
+      .catch(() => {
+        if (!cancelled) setProjectDiffSummary({ workspaceId, fileCount: 0 });
+      });
+    return () => { cancelled = true; };
+  }, [workspace?.id, workspaceRevision]);
 
   async function loadTaskDetail(taskId: string) {
     setLoadingTaskDetail(true);
@@ -180,13 +188,9 @@ export function ChatArea() {
   useEffect(() => {
     if (previousConvIdRef.current === convId) return;
     previousConvIdRef.current = convId;
-    setShowArtifactPanel(false);
-    setArtifactTab('diff');
-    setSelectedArtifactRunId(null);
-    setTasks([]);
-    setAssignments([]);
-    setLoadingTasks(false);
-    setTaskPanelError(null);
+    setProjectPanelOpen(false);
+    setProjectTab('diff');
+    setSelectedLogRunId(null);
     setSelectedTaskId(null);
     setTaskDetail(null);
     setLoadingTaskDetail(false);
@@ -210,20 +214,42 @@ export function ChatArea() {
     });
   }, [messages, plans, timeline]);
 
-  async function openTask(taskId: string) {
-    setShowArtifactPanel(true);
-    setArtifactTab('diff');
-    setSelectedTaskId(taskId);
-    await loadTaskDetail(taskId);
+  function openProjectArtifact(tab: ProjectArtifactTab) {
+    setSelectedLogRunId(null);
+    setProjectTab(tab);
+    setProjectPanelOpen(true);
   }
 
-  function openArtifacts(tab: ArtifactTab, runId?: string | null) {
-    setShowArtifactPanel(true);
-    setArtifactTab(tab);
-    setSelectedArtifactRunId(runId ?? null);
-    if (tab === 'tasks' && convId) {
-      void loadTasksPanelData(convId);
+  function openWorkLog(runId: string) {
+    setProjectPanelOpen(false);
+    setSelectedLogRunId(runId);
+  }
+
+  async function retryRun(item: ChatTimelineItem) {
+    if (!convId) throw new Error('当前会话不可用');
+
+    if (item.taskId) {
+      const response = await api.rerunTask(item.taskId);
+      const nextItem = createTimelineItemFromRun(response.run);
+      dispatch({ type: 'UPSERT_TIMELINE_ITEM', payload: { convId, item: nextItem } });
+      dispatch({
+        type: 'UPDATE_PLAN_ITEM_TASK',
+        payload: {
+          convId,
+          taskId: response.task.id,
+          assignmentId: response.assignment?.id,
+          runId: response.run.id,
+          status: response.run.status,
+        },
+      });
+      if (response.run.status === 'queued' || response.run.status === 'running') {
+        dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: response.run.id } });
+        socketService.subscribeRun(response.run.id);
+      }
+      return;
     }
+
+    await startRun(convId, item.prompt, item.agentId, undefined, workspace, dispatch);
   }
 
   async function handleCancelTask() {
@@ -233,8 +259,6 @@ export function ChatArea() {
     try {
       const updatedTask = await api.updateTaskStatus(taskDetail.task.id, 'cancelled');
       setTaskDetail((current) => current ? { ...current, task: updatedTask, assignments: current.assignments.map((assignment) => assignment.id === current.assignments[0]?.id ? { ...assignment, status: 'cancelled' } : assignment) } : current);
-      setTasks((current) => current.map((task) => (task.id === updatedTask.id ? updatedTask : task)));
-      setAssignments((current) => current.map((assignment) => assignment.id === taskDetail.assignments[0]?.id ? { ...assignment, status: 'cancelled' } : assignment));
       dispatch({ type: 'UPDATE_PLAN_ITEM_TASK', payload: { convId, taskId: updatedTask.id, status: 'cancelled' } });
     } catch (e: unknown) {
       setTaskActionError(e instanceof Error ? e.message : '取消任务失败');
@@ -254,10 +278,6 @@ export function ChatArea() {
       dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: response.run.id } });
       dispatch({ type: 'UPDATE_PLAN_ITEM_TASK', payload: { convId, taskId: response.task.id, assignmentId: response.assignment?.id, runId: response.run.id, status: response.run.status } });
       socketService.subscribeRun(response.run.id);
-      setTasks((current) => current.map((task) => (task.id === response.task.id ? response.task : task)));
-      if (response.assignment) {
-        setAssignments((current) => current.map((assignment) => assignment.id === response.assignment?.id ? response.assignment : assignment));
-      }
       setTaskDetail({ task: response.task, assignments: response.assignment ? [response.assignment] : taskDetail.assignments, latestRun: response.run });
     } catch (e: unknown) {
       setTaskActionError(e instanceof Error ? e.message : '重跑任务失败');
@@ -394,21 +414,30 @@ export function ChatArea() {
   if (!convId) return <WorkspaceSetup />;
   if (convId && !workspace) {
     return (
-      <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-10" style={{ backgroundColor: 'var(--app-bg)' }}>
+      <div className="flex flex-1 items-center justify-center overflow-y-auto bg-white px-6 py-10">
         <WorkspaceSetup compact />
       </div>
     );
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[var(--app-bg)]">
+    <div
+      data-testid="chat-surface"
+      className="relative flex h-full min-h-0 flex-1 overflow-x-hidden"
+      style={{ background: 'linear-gradient(#e8eee7 0%, #f7f7f1 55%, #fff8f7 100%)' }}
+    >
       <div
-        className="flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
-        style={{ paddingRight: showArtifactPanel ? artifactPanelWidth : 0 }}
+        className="relative z-10 flex h-full min-h-0 min-w-0 flex-1 flex-col transition-[padding] duration-150"
+        style={{ paddingRight: activePanelWidth }}
       >
-        <TopBar onOpenArtifacts={openArtifacts} />
-        <div className="flex-1 overflow-y-auto px-8 py-5">
-          <div className="mx-auto w-full max-w-5xl space-y-6">
+        <TopBar
+          onOpenProjectArtifact={openProjectArtifact}
+          projectPanelOpen={projectPanelOpen}
+          activeProjectTab={projectTab}
+          projectFileCount={projectFileCount}
+        />
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-5xl space-y-6 px-8 pb-40 pt-5">
             {state.error ? (
               <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FEF2F2', color: 'var(--status-danger)' }}>
                 {state.error}
@@ -425,79 +454,60 @@ export function ChatArea() {
                 singleAgentName={singleAgent?.name ?? null}
               />
             ) : (
-              feedEntries.map((entry) => (
-                entry.kind === 'message'
-                  ? <MessageCard key={entry.key} message={entry.message} agents={state.agents} />
-                  : entry.kind === 'plan'
-                    ? (
-                      <div key={entry.key} className="flex w-full justify-start mb-4">
-                        <div className="flex items-start gap-3 max-w-[85%]">
-                          <div
-                            className="mt-0.5 flex flex-shrink-0 items-center justify-center w-7 h-7 rounded-md text-xs font-semibold"
-                            style={{ backgroundColor: 'var(--card-strong)', color: 'var(--app-text)' }}
-                          >
-                            O
-                          </div>
-
-                          <div className="flex flex-col gap-1.5 mt-0.5">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>Orchestrator</span>
-                              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                                {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-
-                            <div
-                              onClick={() => openArtifacts('tasks')}
-                              className="group cursor-pointer flex items-center justify-between gap-6 px-4 py-3 rounded-xl transition-all hover:bg-gray-50"
-                              style={{
-                                backgroundColor: 'var(--panel-bg)',
-                                border: '0.5px solid var(--app-border)',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
-                              }}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100">
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4B5563" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                                    <path d="M9 3v18" />
-                                    <path d="M14 9h4" />
-                                    <path d="M14 15h4" />
-                                  </svg>
-                                </div>
-                                <div>
-                                  <div className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>协作任务计划已生成</div>
-                                  <div className="text-xs mt-0.5" style={{ color: 'var(--app-text-secondary)' }}>
-                                    包含 {entry.plan.items.length} 个执行阶段 · 点击查看详情
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="m9 18 6-6-6-6" />
-                                </svg>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                    : <RunCard key={entry.key} item={entry.item} isActive={activeRunIds.includes(entry.item.runId)} onInterrupt={() => socketService.interruptRun(entry.item.runId)} onFocusArtifacts={(runId, tab) => openArtifacts(tab, runId)} />
-              ))
+              feedEntries.map((entry) => {
+                if (entry.kind === 'message') {
+                  return <MessageCard key={entry.key} message={entry.message} agents={state.agents} />;
+                }
+                if (entry.kind === 'plan') {
+                  return (
+                    <PlanCard
+                      key={entry.key}
+                      plan={entry.plan}
+                      timeline={timeline}
+                      onOpenWorkLog={openWorkLog}
+                    />
+                  );
+                }
+                // entry.kind === 'run' — suppress if this run belongs to a plan
+                const belongsToPlan = plans.some((p) =>
+                  p.items.some((item) => item.runId === entry.item.runId),
+                );
+                if (belongsToPlan) return null;
+                return (
+                  <div key={entry.key}>
+                    <RunCard
+                      item={entry.item}
+                      onOpenLogs={openWorkLog}
+                      onRetry={retryRun}
+                    />
+                    {entry.item.blocks
+                      .filter((b) => b.kind === 'approval_request' && b.approvalId)
+                      .map((b) => b.kind === 'approval_request' ? <ToolApprovalCard key={b.id} block={b} /> : null)}
+                  </div>
+                );
+              })
             )}
             {planning ? <SystemMessageIndicator text="@orchestrator 正在分析需求并生成 DAG 任务链..." /> : null}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        <div className="sticky bottom-0 px-8 pb-6 pt-5" style={{ borderTop: '0.5px solid var(--app-border)', backgroundColor: 'var(--app-bg)' }}>
+        <div
+          className="absolute bottom-0 z-20 transition-[padding] duration-150"
+          style={{
+            left: 0,
+            right: 0,
+            paddingRight: activePanelWidth,
+          }}
+        >
           {!workspace && (
-            <div className="mb-3 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: 'var(--status-warning)' }}>
-              Bind a workspace path above to enable agent runs.
+            <div className="mx-auto mb-3 w-full max-w-5xl px-8">
+              <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: 'var(--status-warning)' }}>
+                Bind a workspace path above to enable agent runs.
+              </div>
             </div>
           )}
-          <div className="mx-auto w-full max-w-5xl">
+          <div className="mx-auto w-full max-w-5xl px-8 pb-6">
             <ChatInputArea
               input={input}
               onChange={setInput}
@@ -511,44 +521,34 @@ export function ChatArea() {
               conversationType={conversationType}
               singleAgentId={singleAgent?.id ?? null}
               onSingleAgentChange={(agentId) => {
-                setSingleAgentId(agentId);
-                if (convId) writeSingleAgentId(convId, agentId);
+                if (convId) {
+                  setSingleAgentSelection({ convId, agentId });
+                  writeSingleAgentId(convId, agentId);
+                }
               }}
-              showDemoChips={feedEntries.length > 0}
             />
           </div>
         </div>
 
-        {showArtifactPanel && (
-          <ArtifactPanel
-            open={showArtifactPanel}
-            activeTab={artifactTab}
-            selectedRunId={selectedArtifactRunId}
-            width={artifactPanelWidth}
-            tasks={tasks}
-            assignments={assignments}
-            agents={state.agents}
-            plans={plans}
-            timeline={timeline}
-            onOpenTask={openTask}
-            onWidthChange={setArtifactPanelWidth}
-            onTabChange={(tab) => {
-              setArtifactTab(tab);
-              if (tab === 'tasks' && convId) void loadTasksPanelData(convId);
-            }}
-            onClose={() => {
-              setShowArtifactPanel(false);
-              setSelectedTaskId(null);
-              setTaskDetail(null);
-              setTaskDetailError(null);
-              setTaskActionError(null);
-              setSelectedArtifactRunId(null);
-            }}
-            loadingTasks={loadingTasks}
-            taskError={taskPanelError}
+        {projectPanelOpen && workspace && (
+          <ProjectArtifactPanel
+            open
+            activeTab={projectTab}
+            workspace={workspace}
+            revision={workspaceRevision}
+            onClose={() => setProjectPanelOpen(false)}
           />
         )}
-        {showArtifactPanel && selectedTaskId && (
+        {selectedLogRunId && (
+          <TaskWorkLogPanel
+            open
+            item={selectedLogItem}
+            taskTitle={selectedLogTaskTitle}
+            onClose={() => setSelectedLogRunId(null)}
+            onInterrupt={(runId) => socketService.interruptRun(runId)}
+          />
+        )}
+        {selectedTaskId && (
           <TaskDetailDrawer
             detail={taskDetail}
             agents={state.agents}
@@ -591,7 +591,6 @@ function ChatInputArea({
   conversationType,
   singleAgentId,
   onSingleAgentChange,
-  showDemoChips,
 }: {
   input: string;
   onChange: (value: string) => void;
@@ -605,27 +604,13 @@ function ChatInputArea({
   conversationType: 'single' | 'group';
   singleAgentId: string | null;
   onSingleAgentChange: (agentId: string) => void;
-  showDemoChips: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [mentionOpen, setMentionOpen] = useState(false);
-  const [selectedMention, setSelectedMention] = useState(0);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
+  const [mentionSelection, setMentionSelection] = useState<{ query: string; index: number } | null>(null);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const enabledAgents = agents.filter((agent) => agent.enabled);
   const selectedSingleAgent = enabledAgents.find((agent) => agent.id === singleAgentId) ?? enabledAgents[0] ?? null;
-  const demoPrompts = conversationType === 'single'
-    ? ['检查项目结构', '实现一个小功能', '为最近改动补充测试']
-    : ['让 Orchestrator 检查项目结构', '指定 builder 干活', '为最近改动补充测试'];
-  const demoPromptMap: Record<string, string> = conversationType === 'single'
-    ? {
-        '检查项目结构': '请检查当前项目结构，并建议下一步可以实现的任务',
-        '实现一个小功能': '请实现一个小功能，并说明改动位置',
-        '为最近改动补充测试': '请为最近的功能改动补充或完善测试',
-      }
-    : {
-        '让 Orchestrator 检查项目结构': '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务',
-        '指定 builder 干活': '@builder 请实现一个小功能，并说明改动位置',
-        '为最近改动补充测试': '@tester 请为最近的功能改动补充或完善测试',
-      };
 
   useEffect(() => {
     const node = textareaRef.current;
@@ -648,27 +633,47 @@ function ChatInputArea({
     if (mentionQuery === null) return [];
     return base.filter((agent) => agent.slug.toLowerCase().includes(mentionQuery) || agent.name.toLowerCase().includes(mentionQuery));
   }, [enabledAgents, mentionQuery]);
+  const mentionOpen = mentionQuery !== null && mentionAgents.length > 0;
+  const selectedMention = mentionSelection?.query === mentionQuery
+    ? Math.min(mentionSelection.index, mentionAgents.length - 1)
+    : 0;
 
   useEffect(() => {
-    setMentionOpen(mentionQuery !== null && mentionAgents.length > 0);
-    setSelectedMention(0);
-  }, [mentionAgents.length, mentionQuery]);
+    if (!agentMenuOpen) return;
+
+    function closeAgentMenu(event: MouseEvent) {
+      if (!agentMenuRef.current?.contains(event.target as Node)) setAgentMenuOpen(false);
+    }
+
+    function closeAgentMenuWithEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setAgentMenuOpen(false);
+    }
+
+    document.addEventListener('mousedown', closeAgentMenu);
+    document.addEventListener('keydown', closeAgentMenuWithEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeAgentMenu);
+      document.removeEventListener('keydown', closeAgentMenuWithEscape);
+    };
+  }, [agentMenuOpen]);
 
   function applyMention(slug: string) {
     onChange(input.replace(/@([a-zA-Z0-9_-]*)$/, `@${slug} `));
-    setMentionOpen(false);
   }
 
   function handleInputKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (mentionOpen) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setSelectedMention((value) => (value + 1) % mentionAgents.length);
+        setMentionSelection({ query: mentionQuery!, index: (selectedMention + 1) % mentionAgents.length });
         return;
       }
       if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setSelectedMention((value) => (value - 1 + mentionAgents.length) % mentionAgents.length);
+        setMentionSelection({
+          query: mentionQuery!,
+          index: (selectedMention - 1 + mentionAgents.length) % mentionAgents.length,
+        });
         return;
       }
       if (event.key === 'Enter' && !event.shiftKey) {
@@ -686,60 +691,71 @@ function ChatInputArea({
   return (
     <div className="space-y-3">
       {runtimeUnavailable && (
-        <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FFFBEB', color: 'var(--status-warning)', border: '0.5px solid #FDE68A' }}>
-          ⚠ runtime 当前不可用，请检查配置
+        <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          <AlertTriangle size={16} className="shrink-0 text-amber-500" />
+          <span>runtime 当前不可用，请检查配置</span>
         </div>
       )}
-      {showDemoChips && (
-        <div className="flex flex-wrap gap-2">
-          {demoPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => onChange(demoPromptMap[prompt])}
-              className="rounded-full px-3 py-1.5 text-xs font-medium"
-              style={{ backgroundColor: 'var(--card-bg)', color: 'var(--app-text-secondary)', border: '0.5px solid var(--app-border)' }}
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Badge variant={conversationType === 'single' ? 'muted' : 'running'}>
+      <div
+        data-testid="chat-composer"
+        className="relative z-50 rounded-2xl bg-white p-4"
+        style={{ boxShadow: '0 10px 25px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.03)' }}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-full bg-gray-50 px-2 py-0.5 text-[11px] font-medium text-gray-400">
             {conversationType === 'single' ? '单聊' : '群聊'}
-          </Badge>
+          </span>
           {conversationType === 'single' ? (
-            <select
-              value={selectedSingleAgent?.id ?? ''}
-              onChange={(event) => onSingleAgentChange(event.target.value)}
-              className="rounded-md px-2 py-1 text-xs outline-none"
-              style={{
-                backgroundColor: 'var(--card-subtle)',
-                color: 'var(--app-text)',
-                border: '0.5px solid var(--app-border)',
-              }}
-              aria-label="选择单聊 Agent"
-            >
-              {enabledAgents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-              @成员指派，@orchestrator 自动拆解
-            </span>
-          )}
+            <div ref={agentMenuRef} className="relative">
+              <button
+                type="button"
+                aria-label="选择单聊 Agent"
+                aria-expanded={agentMenuOpen}
+                aria-haspopup="listbox"
+                onClick={() => setAgentMenuOpen((open) => !open)}
+                className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+              >
+                <span>{selectedSingleAgent?.name ?? 'Agent'}</span>
+                <ChevronDown size={14} className={`text-gray-400 transition-transform ${agentMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {agentMenuOpen && (
+                <div
+                  role="listbox"
+                  aria-label="选择单聊 Agent"
+                  className="absolute left-0 top-full z-[70] mt-2 min-w-44 overflow-hidden rounded-xl border border-gray-100 bg-white p-1.5"
+                  style={{ boxShadow: '0 10px 25px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.03)' }}
+                >
+                  {enabledAgents.map((agent) => {
+                    const selected = agent.id === selectedSingleAgent?.id;
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        role="option"
+                        aria-label={agent.name}
+                        aria-selected={selected}
+                        onClick={() => {
+                          onSingleAgentChange(agent.id);
+                          setAgentMenuOpen(false);
+                        }}
+                        className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${selected ? 'bg-gray-50 text-gray-900' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+                      >
+                        <span className="w-4 text-center text-xs text-gray-700">{selected ? '✓' : ''}</span>
+                        <span>{agent.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
         {mentionTokens.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {mentionTokens.map((slug) => (
-              <Badge key={`${slug}-${input}`} variant={slug === 'orchestrator' ? 'muted' : 'running'}>
+              <span key={`${slug}-${input}`} className="rounded-full bg-gray-50 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-400">
                 @{slug}
-              </Badge>
+              </span>
             ))}
           </div>
         )}
@@ -755,26 +771,24 @@ function ChatInputArea({
                 ? `群聊：@builder/@tester 指派，或 @orchestrator 自动拆解（默认 @${defaultAgentSlug}）`
                 : '群聊：@agent-name 指派，或 @orchestrator 自动拆解'}
             rows={1}
-            className="w-full resize-none bg-transparent pr-20 text-sm outline-none"
-            style={{ color: 'var(--app-text)', maxHeight: '112px', minHeight: '24px', overflowY: 'auto' }}
+            className="min-h-[60px] w-full resize-none bg-transparent pr-12 text-sm leading-relaxed text-gray-800 outline-none placeholder:text-gray-300"
+            style={{ maxHeight: '132px', overflowY: 'auto' }}
           />
           {mentionOpen && (
             <div
-              className="absolute bottom-full left-0 mb-2 w-full rounded-lg"
-              style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--app-border)', boxShadow: '0 8px 24px rgba(26,26,24,0.08)' }}
+              className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-xl border border-gray-100/80 bg-white shadow-sm"
             >
               {mentionAgents.map((agent, index) => (
                 <button
                   key={agent.id}
                   type="button"
                   onClick={() => applyMention(agent.slug)}
-                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm"
-                  style={{ backgroundColor: index === selectedMention ? 'var(--card-subtle)' : 'transparent', color: 'var(--app-text)' }}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 ${index === selectedMention ? 'bg-gray-50' : 'bg-transparent'}`}
                 >
-                  <span>{agent.name} <span style={{ color: 'var(--app-text-secondary)' }}>@{agent.slug}</span></span>
-                  <Badge variant={agent.status === 'active' ? 'completed' : 'failed'}>
+                  <span>{agent.name} <span className="font-mono text-gray-400">@{agent.slug}</span></span>
+                  <span className={`text-[11px] font-medium ${agent.status === 'active' ? 'text-green-600' : 'text-amber-600'}`}>
                     {agent.status === 'active' ? '可用' : '不可用'}
-                  </Badge>
+                  </span>
                 </button>
               ))}
             </div>
@@ -784,13 +798,14 @@ function ChatInputArea({
             aria-label="Send"
             onClick={onSend}
             disabled={!input.trim() || sending || disabled}
-            className="absolute bottom-0 right-0 rounded-lg px-3 py-1.5 text-sm font-medium"
-            style={{
-              backgroundColor: !input.trim() || sending || disabled ? 'var(--card-strong)' : 'var(--app-accent)',
-              color: !input.trim() || sending || disabled ? 'var(--app-text-secondary)' : '#FFFFFF',
-            }}
+            className={[
+              'absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200',
+              !input.trim() || sending || disabled
+                ? 'bg-gray-100 text-gray-400'
+                : 'bg-gray-900 text-white hover:bg-gray-800',
+            ].join(' ')}
           >
-            {sending ? '...' : '发送'}
+            <ArrowUp size={16} strokeWidth={2.5} />
           </button>
         </div>
       </div>
@@ -871,28 +886,21 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
               <span className="truncate text-sm font-medium" style={{ color: 'var(--app-text)' }}>
                 {title ?? 'Message'}
               </span>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {time}
-              </span>
             </div>
           </div>
         )}
 
         <div
-          className="rounded-2xl px-5 py-4"
-          style={{
-            backgroundColor: isUser ? '#EFF8FF' : '#FFFFFF',
-            color: 'var(--app-text)',
-            border: isUser ? '0.5px solid #BFDBFE' : '0.5px solid #E8E7E4',
-          }}
+          data-message-content={isUser ? 'user' : 'agent'}
+          className={isUser ? 'rounded-2xl px-5 py-4' : 'py-1 pl-11 pr-2'}
+          style={isUser
+            ? { backgroundColor: '#EFF8FF', color: 'var(--app-text)', border: '0.5px solid #BFDBFE' }
+            : { color: 'var(--app-text)' }}
         >
           {isUser && (
             <div className="mb-2 flex items-center justify-end gap-2">
               <span className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
                 You
-              </span>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {time}
               </span>
             </div>
           )}
@@ -962,7 +970,7 @@ function ChatEmptyState({
             type="button"
             onClick={() => onFillPrompt(prompt.text)}
             className="w-full text-left rounded-lg px-4 py-3 text-sm transition-colors hover:opacity-90"
-            style={{ backgroundColor: '#FFFFFF', color: 'var(--app-text)', border: '0.5px solid var(--app-border)', boxShadow: '0 1px 2px rgba(9, 9, 11, 0.04)' }}
+            style={{ backgroundColor: '#F9FAFB', color: 'var(--app-text)', border: '0.5px solid var(--app-border)', boxShadow: '0 1px 2px rgba(9, 9, 11, 0.04)' }}
           >
             <div className="font-medium" style={{ color: 'var(--app-text)' }}>{prompt.title}</div>
             <div className="text-xs mt-1 truncate" style={{ color: 'var(--app-text-secondary)' }}>{prompt.text}</div>

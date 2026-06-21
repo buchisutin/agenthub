@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { spawn, spawnSync, ChildProcessByStdio } from "node:child_process";
 import readline from "node:readline";
 import { Readable } from "node:stream";
@@ -10,6 +12,41 @@ import {
 } from "../base/agent-runtime.js";
 import { EnvConfig } from "../../config/env.js";
 import { ClaudeEventParser } from "./claude-event-parser.js";
+
+const HOOK_SCRIPT = `#!/bin/bash
+# AgentHub HITL hook — blocks tool use until a human approves or rejects it.
+INPUT=$(cat)
+
+RESPONSE=$(echo "$INPUT" | curl -s -X POST \\
+  -H "Content-Type: application/json" \\
+  -H "X-Run-Id: $AGENTHUB_RUN_ID" \\
+  -H "X-Conv-Id: $AGENTHUB_CONV_ID" \\
+  --data-binary @- \\
+  "$AGENTHUB_API_URL/internal/hook/approval")
+
+APPROVAL_ID=$(echo "$RESPONSE" | grep -o '"approvalId":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "$APPROVAL_ID" ]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Failed to create approval request"}}'
+  exit 0
+fi
+
+for i in $(seq 1 120); do
+  STATUS=$(curl -s "$AGENTHUB_API_URL/approvals/$APPROVAL_ID" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  if [ "$STATUS" != "pending" ]; then
+    if [ "$STATUS" = "approved" ]; then
+      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+    else
+      echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"User rejected this tool call"}}'
+    fi
+    exit 0
+  fi
+  sleep 5
+done
+
+echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Approval timed out"}}'
+exit 0
+`;
 
 export class ClaudeCliRuntime implements AgentRuntime {
   readonly displayName = "Claude Code";
@@ -55,7 +92,15 @@ export class ClaudeCliRuntime implements AgentRuntime {
         : [],
     );
 
-    const args = [...baseArgs];
+    const hitlEnabled =
+      input.agentConfig?.hitlEnabled === true ||
+      (input.agentConfig?.hitlEnabled === undefined && this.env.hitlEnabled);
+
+    const effectiveBaseArgs = hitlEnabled
+      ? baseArgs.filter((a) => a !== "--bare")
+      : baseArgs;
+
+    const args = [...effectiveBaseArgs];
     if (input.resumeSessionId) {
       args.push("--resume", input.resumeSessionId);
     }
@@ -68,8 +113,17 @@ export class ClaudeCliRuntime implements AgentRuntime {
     args.push("--");
     args.push(input.prompt);
 
+    const spawnEnv = { ...process.env };
+    if (hitlEnabled) {
+      this.writeHitlHook(input.workspacePath);
+      spawnEnv.AGENTHUB_RUN_ID = input.runId;
+      spawnEnv.AGENTHUB_CONV_ID = input.conversationId;
+      spawnEnv.AGENTHUB_API_URL = this.env.apiBaseUrl;
+    }
+
     const child = spawn(command, args, {
       cwd: input.workspacePath,
+      env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.activeRuns.set(input.runId, child);
@@ -294,6 +348,43 @@ export class ClaudeCliRuntime implements AgentRuntime {
       version,
       executablePath,
     };
+  }
+
+  private writeHitlHook(workspacePath: string): void {
+    const hooksDir = path.join(workspacePath, ".claude", "hooks");
+    const scriptPath = path.join(hooksDir, "agenthub-approval.sh");
+    const settingsPath = path.join(workspacePath, ".claude", "settings.json");
+
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(scriptPath, HOOK_SCRIPT, { mode: 0o755 });
+
+    const settings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Bash|Write|Edit|MultiEdit",
+            hooks: [
+              {
+                type: "command",
+                command: scriptPath,
+                timeout: 600,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    // Merge with existing settings if present
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    } catch {
+      // no existing settings
+    }
+
+    const merged = { ...existing, hooks: settings.hooks };
+    fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
   }
 
   private mergeToolRules(...groups: string[][]): string[] {

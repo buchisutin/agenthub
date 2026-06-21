@@ -395,7 +395,14 @@ export class PlannerAgentService {
         continue;
       }
 
-      const toolCall = toolCalls[0]!;
+      const toolCall = toolCalls.find((call) => call.type === "function");
+      if (!toolCall) {
+        session.messages.push({
+          role: "user",
+          content: "请使用 output_plan 工具输出你的计划。",
+        });
+        continue;
+      }
       const toolName = toolCall.function.name;
 
       if (toolName === "output_plan") {

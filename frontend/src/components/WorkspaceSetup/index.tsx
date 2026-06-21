@@ -29,6 +29,10 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const [showAgentSettings, setShowAgentSettings] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledAgents = useMemo(() => state.agents.filter((agent) => agent.enabled), [state.agents]);
+  const defaultAgent = enabledAgents.find((agent) => agent.is_default) ?? enabledAgents[0] ?? null;
+  const selectedSingleAgentId = enabledAgents.some((agent) => agent.id === singleAgentId)
+    ? singleAgentId
+    : defaultAgent?.id ?? '';
 
   // Check runtime once on mount (for the badge).
   useEffect(() => {
@@ -36,12 +40,6 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
       .then((c) => setRuntimeAvailable(c.available))
       .catch(() => setRuntimeAvailable(false));
   }, []);
-
-  useEffect(() => {
-    if (enabledAgents.some((agent) => agent.id === singleAgentId)) return;
-    const defaultAgent = enabledAgents.find((agent) => agent.is_default) ?? enabledAgents[0];
-    if (defaultAgent) setSingleAgentId(defaultAgent.id);
-  }, [enabledAgents, singleAgentId]);
 
   const handleAgentsChanged = useCallback((agents: Agent[]) => {
     dispatch({ type: 'SET_AGENTS', payload: agents });
@@ -79,7 +77,7 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
         rootPath: rootPath.trim(),
         type: conversationType,
       });
-      if (conversationType === 'single' && singleAgentId) writeSingleAgentId(result.conversation.id, singleAgentId);
+      if (conversationType === 'single' && selectedSingleAgentId) writeSingleAgentId(result.conversation.id, selectedSingleAgentId);
       dispatch({ type: 'ADD_CONVERSATION', payload: result.conversation });
       dispatch({ type: 'SET_WORKSPACE', payload: { convId: result.conversation.id, workspace: result.workspace } });
       dispatch({ type: 'SELECT_CONVERSATION', payload: result.conversation.id });
@@ -108,7 +106,17 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const badges = validation ? buildBadges(validation, runtimeAvailable) : [];
 
   const card = (
-    <div className="agenthub-card w-full max-w-[460px] p-8">
+    <div
+      data-testid="workspace-setup-card"
+      className="w-full max-w-[460px] rounded-2xl px-8 pt-8 pb-6"
+      style={{
+        backgroundColor: 'rgba(255, 252, 250, 0.66)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)',
+        border: '1px solid rgba(103, 115, 101, 0.13)',
+        boxShadow: '0 12px 32px rgba(62, 78, 64, 0.07)',
+      }}
+    >
       <div className="space-y-5">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-xl font-semibold tracking-[-0.02em]" style={{ color: 'var(--app-text)' }}>
@@ -117,8 +125,13 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
           <button
             type="button"
             onClick={() => setShowAgentSettings(true)}
-            className="rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-90"
-            style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/75"
+            style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.52)',
+              color: '#244A2D',
+              border: '1px solid rgba(103, 115, 101, 0.2)',
+              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
+            }}
           >
             配置 Agents
           </button>
@@ -148,7 +161,7 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
               {enabledAgents.map((agent) => (
                 <AgentChoiceCard
                   key={agent.id}
-                  active={agent.id === singleAgentId}
+                  active={agent.id === selectedSingleAgentId}
                   name={agent.name}
                   description={describeAgent(agent)}
                   onClick={() => setSingleAgentId(agent.id)}
@@ -159,27 +172,8 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
         )}
 
         {conversationType === 'group' && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
-                群聊成员
-              </div>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {enabledAgents.length} 个可用
-              </span>
-            </div>
-            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1" data-testid="agent-picker-list">
-              {enabledAgents.map((agent) => (
-                <AgentChoiceCard
-                  key={agent.id}
-                  active={agent.is_default}
-                  name={agent.name}
-                  description={describeAgent(agent)}
-                  onClick={() => setShowAgentSettings(true)}
-                  actionLabel={agent.is_default ? '默认' : '配置'}
-                />
-              ))}
-            </div>
+          <div className="rounded-lg px-3 py-2.5 text-xs" style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text-secondary)' }}>
+            {enabledAgents.length} 个 Agent 可用 · 通过 @成员名 或 @orchestrator 发起协作
           </div>
         )}
 
@@ -190,8 +184,11 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={PLACEHOLDER}
-              className="w-full rounded-lg px-4 py-3 text-sm font-mono outline-none"
-              style={getInputStyle(valid, invalid)}
+              className={`w-full rounded-lg px-4 py-3 font-mono text-sm outline-none transition-colors hover:border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${
+                valid ? 'border border-green-600 bg-gray-50/50' :
+                invalid ? 'border border-red-500 bg-gray-50/50' :
+                'border border-gray-200 bg-gray-50/50'
+              }`}
               autoFocus={!compact}
               spellCheck={false}
             />
@@ -227,22 +224,38 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
           type="button"
           disabled={!canCreate || creating}
           onClick={() => void handleCreate()}
-          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+          className="relative isolate inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full p-[2px] text-sm font-semibold transition-all hover:-translate-y-px hover:brightness-[1.015] active:translate-y-0 disabled:transform-none disabled:brightness-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9CAA98] focus-visible:ring-offset-2"
           aria-label={creating ? '创建中...' : '创建协作会话'}
           style={{
-            backgroundColor: canCreate ? '#1A6BCC' : 'var(--card-strong)',
-            color: canCreate ? '#FFFFFF' : 'var(--app-text-secondary)',
-            border: canCreate ? '0.5px solid #1A6BCC' : '0.5px solid var(--app-border)',
-            boxShadow: canCreate ? '0 4px 12px rgba(26, 107, 204, 0.16)' : 'none',
+            background: canCreate
+              ? 'linear-gradient(#98a596 0%, #dce9d8 100%)'
+              : 'linear-gradient(#b6c0b4 0%, #e1eae0 100%)',
+            color: canCreate ? '#31543A' : '#849084',
+            boxShadow: canCreate
+              ? '0 8px 18px rgba(112, 137, 108, 0.12), 0 2px 5px rgba(0, 0, 0, 0.03)'
+              : '0 4px 12px rgba(112, 137, 108, 0.05)',
             opacity: creating ? 0.8 : 1,
             cursor: !canCreate || creating ? 'not-allowed' : 'pointer',
           }}
         >
           <span
+            data-testid="create-button-surface"
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-[2px] rounded-full border border-white/50"
             style={{
-              color: canCreate ? '#FFFFFF' : 'var(--app-text-secondary)',
-              fontWeight: 600,
+              background: canCreate
+                ? 'linear-gradient(#f7faf5 0%, #ced8ca 55%, #edf5e9 100%)'
+                : 'linear-gradient(#f3f6f1 0%, #dce4d8 55%, #eff4ed 100%)',
+              boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.56), inset 0 -1px 0 rgba(224, 237, 220, 0.52)',
+            }}
+          />
+          <span
+            className="relative z-10"
+            style={{
+              color: canCreate ? '#31543A' : '#849084',
+              fontWeight: 650,
               lineHeight: 1,
+              textShadow: 'none',
             }}
           >
             {creating ? '创建中...' : '创建协作会话 →'}
@@ -261,7 +274,11 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   if (compact) return card;
 
   return (
-    <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-12" style={{ backgroundColor: 'var(--app-bg)' }}>
+    <div
+      data-testid="workspace-setup-surface"
+      className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-12"
+      style={{ background: 'linear-gradient(#e8eee7 0%, #f7f7f1 55%, #fff8f7 100%)' }}
+    >
       {card}
     </div>
   );
@@ -377,20 +394,6 @@ function buildBadges(validation: WorkspaceValidationResult, runtimeAvailable: bo
   const rtVariant: BadgeVariant = runtimeAvailable === false ? 'best_effort' : runtimeAvailable === true ? 'completed' : 'muted';
   badges.push({ label: rtLabel, variant: rtVariant });
   return badges;
-}
-
-function getInputStyle(valid: boolean, invalid: boolean) {
-  const borderColor = valid
-    ? '#1A7F4B'
-    : invalid
-      ? 'var(--status-danger)'
-      : 'var(--app-border)';
-  return {
-    backgroundColor: 'var(--card-bg)',
-    color: 'var(--app-text)',
-    border: `1px solid ${borderColor}`,
-    borderRadius: '8px',
-  };
 }
 
 function pathBasename(p: string): string {

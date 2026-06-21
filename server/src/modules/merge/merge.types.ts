@@ -4,6 +4,7 @@ import {
   RunMerge,
   RunMergeRecord,
   RunMergeStatus,
+  WorkspaceChangedEvent,
 } from "../../shared/types.js";
 
 export type MergeResolutionResult =
@@ -42,6 +43,7 @@ export interface MergeServiceDeps {
     mergedContent?: string;
     reason?: string;
   }>;
+  onWorkspaceChanged?: (event: WorkspaceChangedEvent) => void;
 }
 
 export interface PersistMergeInput {

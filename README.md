@@ -8,9 +8,13 @@
 
 ## 界面预览
 
-![IM 聊天页面与任务协作看板](docs/screenshots/chat-and-collaboration.png)
+**Agent 配置与会话创建** — 注册 Claude Code / Codex Agent，绑定本地项目目录，创建协作会话。
 
 ![Agent 配置与会话创建](docs/screenshots/agent-setup.png)
+
+**IM 聊天页面与任务协作看板** — 发送一条消息，Orchestrator 自动规划 DAG 任务图，多个 Agent 并行执行，实时展示每个 Agent 的工具调用与输出。
+
+![IM 聊天页面与任务协作看板](docs/screenshots/chat-and-collaboration.png)
 
 ---
 

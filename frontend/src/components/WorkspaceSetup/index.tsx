@@ -374,55 +374,6 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   );
 }
 
-function AgentChoiceCard({
-  active,
-  name,
-  description,
-  onClick,
-  actionLabel,
-}: {
-  active: boolean;
-  name: string;
-  description: string;
-  onClick: () => void;
-  actionLabel?: string;
-}) {
-  const marker = actionLabel ?? (active ? '✓' : '');
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="rounded-lg px-3 py-3 text-left transition-colors"
-      style={{
-        backgroundColor: active ? '#EFF8FF' : 'var(--card-bg)',
-        border: active ? '1px solid #93C5FD' : '0.5px solid var(--app-border)',
-        boxShadow: active ? '0 0 0 2px rgba(147, 197, 253, 0.18)' : 'none',
-        color: 'var(--app-text)',
-      }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{name}</div>
-          <div className="mt-1 line-clamp-2 text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-            {description}
-          </div>
-        </div>
-        <span
-          className="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold"
-          style={{
-            backgroundColor: active ? '#1A6BCC' : 'var(--card-subtle)',
-            color: active ? '#FFFFFF' : 'var(--app-text-secondary)',
-            border: active ? '0.5px solid #1A6BCC' : '0.5px solid var(--app-border)',
-          }}
-        >
-          {marker}
-        </span>
-      </div>
-    </button>
-  );
-}
-
 function describeAgent(agent: { name: string; slug: string; instructions: string | null }) {
   const custom = agent.instructions?.trim();
   if (custom) return custom;

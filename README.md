@@ -1,97 +1,97 @@
 # AgentHub
 
-A local multi-agent collaboration platform that unifies Claude Code CLI and Codex CLI under a chat interface. Send one message, get multiple AI agents working in parallel on your codebase — with real-time visibility into every tool call, file change, and merge conflict.
+本地多 Agent 协作平台，统一接入 Claude Code CLI 与 Codex CLI，以 IM 聊天界面驱动多个 AI Agent 并行开发同一代码仓库，实时呈现每个 Agent 的工具调用、文件变更与合并过程。
 
-**Stack:** TypeScript · React · Vite · Tailwind CSS · Node.js · Express · Socket.IO · SQLite
-
----
-
-## Why
-
-Claude Code and Codex are powerful but isolated. Switching between them means losing context, duplicating work, and manually reconciling changes. AgentHub wires them together: one conversation, multiple agents, one workspace.
+**技术栈：** TypeScript · React · Vite · Tailwind CSS · Node.js · Express · Socket.IO · SQLite
 
 ---
 
-## How It Works
+## 为什么做这个
 
-### Orchestrator → DAG → Parallel Runs
+Claude Code 和 Codex 能力互补但各自孤立——切换工具意味着丢失上下文、重复工作、手动合并冲突。AgentHub 把它们连接起来：一个对话，多个 Agent，共享同一个工作区。
 
-When you send a message, a Planner Agent (OpenAI function-calling) breaks it into a dependency graph of tasks. Tasks with no shared dependencies run in parallel; downstream tasks receive upstream output summaries injected into their prompts.
+---
+
+## 核心机制
+
+### Orchestrator → DAG → 并行执行
+
+用户发送消息后，Planner Agent（基于 OpenAI function calling）将需求拆解为带依赖关系的任务图。无依赖的任务并行执行，下游任务的 prompt 中自动注入上游任务的输出摘要。
 
 ```
-User: "add auth + write tests for it"
+用户：「实现登录接口 + 为它写测试」
 
-Orchestrator plans:
-  t1: implement JWT auth endpoint   → assigned to Claude Code
-  t2: implement refresh token logic → assigned to Codex        (parallel with t1)
-  t3: write auth tests              → depends on t1, t2
+Orchestrator 规划：
+  t1: 实现 JWT 登录接口   → 分配给 Claude Code
+  t2: 实现 refresh token → 分配给 Codex          （与 t1 并行）
+  t3: 编写认证测试        → 依赖 t1、t2
 
-t3 prompt includes: "Upstream outputs: t1 added /api/auth/login returning JWT..."
+t3 的 prompt 包含：「上游输出：t1 已完成 /api/auth/login，返回 JWT token...」
 ```
 
-### Workspace Isolation
+### git worktree 工作区隔离
 
-Each agent run gets its own `git worktree` + branch, sharing the `.git` object store but with a fully isolated working directory. No agent can overwrite another's in-progress work.
+每个 Agent run 获得独立的 `git worktree` + 分支，共享 `.git` 对象存储，文件目录完全隔离，Agent 之间不会互相覆盖。
 
 ```
 .agenthub/worktrees/
-  <run-id-1>/   ← Claude Code works here (branch: agenthub/run-abc)
-  <run-id-2>/   ← Codex works here      (branch: agenthub/run-def)
+  <run-id-1>/   ← Claude Code 在此工作（分支：agenthub/run-abc）
+  <run-id-2>/   ← Codex 在此工作      （分支：agenthub/run-def）
 ```
 
-### Three-Way Merge
+### 三路对比合并
 
-When a run completes, AgentHub performs a three-way comparison:
+Run 完成后执行三路对比：
 
-| Version | Meaning |
-|---------|---------|
-| **base** | File content when the run started |
-| **run** | Agent's output |
-| **current** | Main workspace now (may have changed) |
+| 版本 | 含义 |
+|------|------|
+| **base** | Run 启动时的文件内容 |
+| **run** | Agent 的产物 |
+| **current** | 主目录当前状态（可能已被其他 Agent 修改） |
 
-If `current == base`, the change auto-merges. If another agent already modified the file, a conflict is surfaced for manual resolution — with all three versions visible side by side.
+`current == base` 时自动合入；否则将冲突推给用户裁决，三个版本并排展示。
 
-### Tool Approval Unified in Web UI
+### 工具调用审批统一到 Web UI
 
-Claude Code and Codex each pop their own terminal approval prompts for dangerous operations. AgentHub installs a `PreToolUse` hook that intercepts every tool call across all agents and routes the approval request to the web UI. One interface for all agents.
+Claude Code 和 Codex 各自在终端弹出危险操作审批，用户无法同时管理多个窗口。AgentHub 通过 `PreToolUse Hook` 拦截所有 Agent 的工具调用，将审批请求重定向到 Web UI，一个界面管理所有 Agent。
 
-### Real-Time Event Stream
+### 实时事件流
 
-The server parses the `stream-json` output from each CLI process and emits structured events over Socket.IO. The frontend reconstructs the full execution timeline in real time — 14 event types including `text_delta`, `tool_started`, `tool_completed`, `run_completed`, and `approval_required`.
-
----
-
-## Key Engineering Details
-
-**Message queue** — prompts sent while a plan is executing are queued and automatically drained when the current DAG completes, preserving order without blocking the user.
-
-**Conflict prediction** — at planning time, the orchestrator scans `affected_files` across all parallel tasks and pre-flags likely conflicts before any agent starts running.
-
-**Crash recovery** — plan state is persisted to SQLite on every status change. On server restart, the orchestrator rebuilds in-flight plans from the database and continues pending tasks.
-
-**`@slug` direct routing** — prefix a message with `@agent-name` to bypass the orchestrator and route directly to a specific agent, skipping planning overhead.
-
-**Preview + Deploy** — after a run completes, auto-detect `package.json` scripts and launch a dev server from the worktree for in-browser preview before merging.
+服务端解析每个 CLI 进程的 `stream-json` 输出，通过 Socket.IO 推送结构化事件，前端实时重建完整执行过程。覆盖 14 种事件类型：`text_delta`、`tool_started`、`tool_completed`、`run_completed`、`approval_required` 等。
 
 ---
 
-## Quick Start
+## 工程细节
+
+**消息队列** — DAG 执行期间收到的新消息存入队列，当前计划完成后自动排空处理，保证顺序不丢失。
+
+**冲突预测** — 规划阶段扫描各任务的 `affected_files` 重叠情况，在 Agent 启动前预标记潜在冲突。
+
+**崩溃恢复** — 每次状态变更都持久化到 SQLite。服务重启后，Orchestrator 从数据库重建执行中的计划，继续处理未完成任务。
+
+**`@slug` 直连路由** — 消息前缀 `@agent-name` 可绕过 Orchestrator 规划，直接路由到指定 Agent。
+
+**Preview / Deploy** — Run 完成后自动检测 `package.json` 脚本，在 worktree 中启动开发服务器，合并前可在浏览器预览变更效果。
+
+---
+
+## 快速启动
 
 ```bash
-# Install dependencies
+# 安装依赖
 cd server && npm install
 cd ../frontend && npm install
 
-# Start backend (terminal 1)
+# 启动后端（终端 1）
 cd server && npm run dev
 
-# Start frontend (terminal 2)
+# 启动前端（终端 2）
 cd frontend && npm run dev
 ```
 
-Open `http://localhost:5173`, bind a local project directory, and start a collaboration session.
+浏览器打开 `http://localhost:5173`，绑定本地项目目录，创建协作会话。
 
-To enable the LLM planner, set these in `server/.env`:
+启用 LLM Planner 需在 `server/.env` 中配置：
 
 ```
 PLANNER_API_URL=https://api.openai.com/v1
@@ -99,42 +99,42 @@ PLANNER_API_KEY=sk-...
 PLANNER_MODEL=gpt-4o
 ```
 
-Without them, the orchestrator falls back to single-task execution.
+未配置时 Orchestrator 降级为单任务执行。
 
 ---
 
-## Architecture
+## 项目结构
 
 ```
-frontend/                   React + Vite + Tailwind
+frontend/
   components/
-    ChatArea/               Main conversation view
-    PlanCard/               DAG visualization + task status
-    ProjectArtifactPanel/   Per-run output artifacts
-    ToolApprovalCard/       Unified tool approval UI
+    ChatArea/               主对话视图
+    PlanCard/               DAG 可视化 + 任务状态
+    ProjectArtifactPanel/   每次 Run 的产物归档
+    ToolApprovalCard/       统一工具审批 UI
 
 server/
   modules/
-    orchestrator/           Planner Agent + DAG scheduler
-    merge/                  Three-way merge + conflict resolution
-    workspaces/             git worktree lifecycle
-    approvals/              PreToolUse hook → web UI bridge
-    deploy/ preview/        Dev server management
+    orchestrator/           Planner Agent + DAG 调度器
+    merge/                  三路合并 + 冲突裁决
+    workspaces/             git worktree 生命周期管理
+    approvals/              PreToolUse Hook → Web UI 桥接
+    deploy/ preview/        开发服务器管理
   runtime/
-    claude/                 Claude Code CLI adapter + event parser
-    codex/                  Codex CLI adapter + event parser
-    base/                   Abstract AgentRuntime interface
+    claude/                 Claude Code CLI 适配器 + 事件解析
+    codex/                  Codex CLI 适配器 + 事件解析
+    base/                   抽象 AgentRuntime 接口
 ```
 
 ---
 
-## Research Notes
+## 调研背景
 
-Before settling on the current merge approach, I surveyed ~20 open-source multi-agent projects (git-lanes, Weave, Wit, STORM, Maestro-AI, Taskplane, etc.) and 3 academic papers. Key conclusions:
+在确定合并方案前，调研了约 20 个开源多 Agent 项目（git-lanes、Weave、Wit、STORM、Maestro-AI、Taskplane 等）及 3 篇学术论文，主要结论：
 
-- Git worktree isolation + three-way merge is the industry baseline
-- LLM-based merging is not mainstream — deterministic approaches (Weave's Tree-sitter entity-level merge) eliminate 95% of false conflicts at zero token cost
-- The real token cost is in encoding + context retransmission, not the merge step
-- LLM value in merge pipelines is in **self-repair after CI failure**, not in resolving diffs
+- git worktree 隔离 + 三路合并是行业主流基线
+- LLM 合并不是主流——Weave 的 Tree-sitter 实体级合并可消除 95% 假冲突，零 token 成本
+- Token 消耗的大头在编码阶段和上下文重传，不在合并环节
+- LLM 在合并流水线中的真正价值是 **CI 失败后的自修复**，而非解决 diff 冲突
 
-The `use_llm` merge strategy is stubbed as a reserved interface with the intent to gate it behind a token budget and only activate it when deterministic resolution fails.
+`use_llm` 合并策略作为预留接口保留，计划在确定性方案无法解决时配合 token 预算上限激活。

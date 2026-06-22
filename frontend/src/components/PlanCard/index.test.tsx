@@ -16,6 +16,15 @@ function makePlan(overrides: Partial<PlanCardModel> = {}): PlanCardModel {
 }
 
 describe('PlanCard', () => {
+  it('fills the conversation column and splits the board into four equal columns', () => {
+    render(<PlanCard plan={makePlan()} />);
+
+    const card = screen.getByText('协作计划').closest('.agenthub-card');
+    const grid = screen.getByText('等待中').closest('.grid') as HTMLDivElement | null;
+    expect(card?.getAttribute('class')).toContain('w-full');
+    expect(grid?.style.gridTemplateColumns).toBe('repeat(4, minmax(0, 1fr))');
+  });
+
   it('renders kanban columns', () => {
     const plan = makePlan({
       items: [

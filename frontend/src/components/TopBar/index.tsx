@@ -16,7 +16,6 @@ export function TopBar({
   onOpenProjectArtifact = () => {},
   projectPanelOpen = false,
   activeProjectTab,
-  projectFileCount = 0,
 }: TopBarProps) {
   const { state, dispatch } = useApp();
   const conv = state.conversations.find((c) => c.id === state.selectedConvId);
@@ -123,7 +122,6 @@ export function TopBar({
         <div className="flex items-center gap-2 flex-shrink-0">
           {(['diff', 'preview', 'deploy'] as ProjectArtifactTab[]).map((tab) => {
             const baseLabel = tab === 'diff' ? '代码改动' : tab === 'preview' ? '网页预览' : '部署';
-            const label = tab === 'diff' && projectFileCount > 0 ? `${baseLabel} ${projectFileCount}` : baseLabel;
             const isActive = projectPanelOpen && activeProjectTab === tab;
             return (
               <button
@@ -136,7 +134,7 @@ export function TopBar({
                   : { backgroundColor: '#f0f5f0', color: '#2E6B4F', border: '0.5px solid #A8CCB5' }
                 }
               >
-                {label}
+                {baseLabel}
               </button>
             );
           })}

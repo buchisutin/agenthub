@@ -102,6 +102,7 @@ export function createOrchestratorRouter(
         typeof req.body?.sourceMessageId === "string"
           ? req.body.sourceMessageId
           : undefined,
+        { preview: req.body?.preview === true },
       );
       res.json(result);
     } catch (error) {
@@ -141,6 +142,17 @@ export function createOrchestratorRouter(
         : /running/i.test(message)
           ? 409
           : 400;
+      res.status(status).json({ detail: message });
+    }
+  });
+
+  router.post("/plans/:planMessageId/execute", async (req, res) => {
+    try {
+      const result = await orchestratorService.executePlan(req.params.planMessageId);
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to execute plan";
+      const status = /not found/i.test(message) ? 404 : 400;
       res.status(status).json({ detail: message });
     }
   });

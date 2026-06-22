@@ -24,6 +24,7 @@ export interface AppState {
   timeline: Record<string, ChatTimelineItem[]>;
   plansByConversation: Record<string, PlanCardModel[]>;
   planningByConversation?: Record<string, OrchestratorPlanningState | null>;
+  pendingClarificationConvIds: string[];
   activeRunIdsByConversation: Record<string, string[]>;
   workspaceRevisionById?: Record<string, number>;
   connected: boolean;
@@ -54,9 +55,12 @@ export type Action =
   | { type: 'ADD_MESSAGE'; payload: { convId: string; message: Message } }
   | { type: 'SET_TIMELINE'; payload: { convId: string; items: ChatTimelineItem[] } }
   | { type: 'ADD_PLAN_CARD'; payload: { convId: string; plan: PlanCardModel } }
+  | { type: 'UPDATE_PLAN_PREVIEW_EXECUTED'; payload: { convId: string; planId: string } }
   | { type: 'START_ORCHESTRATOR_PLANNING'; payload: { convId: string; prompt: string } }
   | { type: 'APPEND_ORCHESTRATOR_PLANNING_TEXT'; payload: { convId: string; delta: string } }
   | { type: 'CLEAR_ORCHESTRATOR_PLANNING'; payload: { convId: string } }
+  | { type: 'SET_PENDING_CLARIFICATION'; payload: { convId: string } }
+  | { type: 'CLEAR_PENDING_CLARIFICATION'; payload: { convId: string } }
   | { type: 'UPDATE_PLAN_ITEM_STATUS'; payload: { convId: string; runId: string; status: ToolStatusLike } }
   | {
       type: 'UPDATE_PLAN_ITEM_TASK';
@@ -100,6 +104,7 @@ export const initialState: AppState = {
   timeline: {},
   plansByConversation: {},
   planningByConversation: {},
+  pendingClarificationConvIds: [],
   activeRunIdsByConversation: {},
   workspaceRevisionById: {},
   connected: false,
@@ -208,6 +213,7 @@ export function reducer(state: AppState, action: Action): AppState {
         timeline: Object.fromEntries(Object.entries(state.timeline).filter(([k]) => k !== id)),
         plansByConversation: Object.fromEntries(Object.entries(state.plansByConversation).filter(([k]) => k !== id)),
         planningByConversation: Object.fromEntries(Object.entries(state.planningByConversation ?? {}).filter(([k]) => k !== id)),
+        pendingClarificationConvIds: state.pendingClarificationConvIds.filter((convId) => convId !== id),
         activeRunIdsByConversation: Object.fromEntries(Object.entries(state.activeRunIdsByConversation).filter(([k]) => k !== id)),
       };
     }
@@ -304,6 +310,18 @@ export function reducer(state: AppState, action: Action): AppState {
         },
       };
     }
+    case 'UPDATE_PLAN_PREVIEW_EXECUTED': {
+      const current = state.plansByConversation[action.payload.convId] ?? [];
+      return {
+        ...state,
+        plansByConversation: {
+          ...state.plansByConversation,
+          [action.payload.convId]: current.map((plan) =>
+            plan.id === action.payload.planId ? { ...plan, preview: undefined } : plan,
+          ),
+        },
+      };
+    }
     case 'START_ORCHESTRATOR_PLANNING':
       return {
         ...state,
@@ -351,6 +369,20 @@ export function reducer(state: AppState, action: Action): AppState {
           ...(state.planningByConversation ?? {}),
           [action.payload.convId]: null,
         },
+      };
+    case 'SET_PENDING_CLARIFICATION':
+      return {
+        ...state,
+        pendingClarificationConvIds: state.pendingClarificationConvIds.includes(action.payload.convId)
+          ? state.pendingClarificationConvIds
+          : [...state.pendingClarificationConvIds, action.payload.convId],
+      };
+    case 'CLEAR_PENDING_CLARIFICATION':
+      return {
+        ...state,
+        pendingClarificationConvIds: state.pendingClarificationConvIds.filter(
+          (id) => id !== action.payload.convId,
+        ),
       };
     case 'UPDATE_PLAN_ITEM_STATUS':
       return {

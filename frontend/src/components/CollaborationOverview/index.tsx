@@ -8,6 +8,7 @@ interface CollaborationOverviewProps {
   plans: PlanCardModel[];
   timeline: ChatTimelineItem[];
   activeRunIds: string[];
+  queuedCount?: number;
   onOpenArtifacts: (tab: ArtifactTab) => void;
 }
 
@@ -21,6 +22,7 @@ export function CollaborationOverview({
   plans,
   timeline,
   activeRunIds,
+  queuedCount = 0,
   onOpenArtifacts,
 }: CollaborationOverviewProps) {
   const plan = getLatestPlan(plans);
@@ -44,6 +46,12 @@ export function CollaborationOverview({
         <span>{completedTasks}/{totalTasks} 完成</span>
         <span>{activeRuns.length} 运行中</span>
         <span style={{ color: attentionRuns.length > 0 ? '#991B1B' : 'var(--app-text-secondary)' }}>{attentionRuns.length} 待处理</span>
+        {queuedCount > 0 && (
+          <span className="px-2 py-0.5 rounded-full text-xs"
+                style={{ backgroundColor: 'rgba(234,179,8,0.1)', color: '#92400e' }}>
+            {queuedCount} 条排队中
+          </span>
+        )}
         {activeRuns[0] ? (
           <Badge variant={getStatusVariant(activeRuns[0].status)}>{getStatusLabel(activeRuns[0].status)}</Badge>
         ) : null}

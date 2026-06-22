@@ -60,6 +60,7 @@ function renderSidebar({
     plansByConversation: {},
     planningByConversation: {},
     activeRunIdsByConversation: {},
+    pendingClarificationConvIds: [],
     connected: true,
     loadingConvs: false,
     loadingAgents: false,

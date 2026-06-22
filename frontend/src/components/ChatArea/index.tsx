@@ -57,10 +57,6 @@ function parseMentions(input: string, agents: Agent[]) {
   };
 }
 
-function hasOrchestratorMention(input: string) {
-  return /@orchestrator\b/i.test(input);
-}
-
 function stripOrchestratorMention(input: string) {
   return input.replace(/@orchestrator\b/gi, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -123,6 +119,10 @@ export function ChatArea() {
   const workspaceRevision = workspace ? state.workspaceRevisionById?.[workspace.id] ?? 0 : 0;
   const messages = useMemo(() => (convId ? state.messagesByConversation[convId] ?? [] : []), [convId, state.messagesByConversation]);
   const planning = useMemo(() => (convId ? state.planningByConversation?.[convId] ?? null : null), [convId, state.planningByConversation]);
+  const pendingClarification = useMemo(
+    () => (convId ? state.pendingClarificationConvIds?.includes(convId) ?? false : false),
+    [convId, state.pendingClarificationConvIds],
+  );
   const defaultAgentId = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.id ?? state.agents.find((agent) => agent.enabled && agent.adapter_type === 'claude_cli')?.id, [state.agents]);
   const defaultAgentSlug = useMemo(() => state.agents.find((agent) => agent.enabled && agent.is_default)?.slug ?? null, [state.agents]);
   const runtimeUnavailable = useMemo(() => state.agents.some((agent) => agent.enabled && agent.status === 'unavailable'), [state.agents]);
@@ -202,7 +202,7 @@ export function ChatArea() {
   const feedEntries = useMemo(() => {
     const rank = (kind: 'message' | 'plan' | 'run') => (kind === 'message' ? 0 : kind === 'plan' ? 1 : 2);
     return [
-      ...messages.map((message) => ({ kind: 'message' as const, key: `message-${message.id}`, at: message.created_at, message })),
+      ...messages.filter((m) => m.message_type !== 'queued_prompt').map((message) => ({ kind: 'message' as const, key: `message-${message.id}`, at: message.created_at, message })),
       ...plans.map((plan) => ({ kind: 'plan' as const, key: `plan-${plan.id}`, at: plan.createdAt, plan })),
       ...timeline.map((item) => ({ kind: 'run' as const, key: item.id, at: item.startedAt, item })),
     ].sort((a, b) => {
@@ -214,9 +214,9 @@ export function ChatArea() {
     });
   }, [messages, plans, timeline]);
 
-  function openProjectArtifact(tab: ProjectArtifactTab) {
+  function openProjectArtifact(tab: 'tasks' | 'diff' | 'preview' | 'deploy') {
     setSelectedLogRunId(null);
-    setProjectTab(tab);
+    setProjectTab(tab === 'tasks' ? 'diff' : tab);
     setProjectPanelOpen(true);
   }
 
@@ -314,6 +314,21 @@ export function ChatArea() {
     }
   }
 
+  async function handleExecutePlan(planId: string) {
+    if (!convId) return;
+    try {
+      const response = await api.executePlan(planId);
+      dispatch({ type: 'UPDATE_PLAN_PREVIEW_EXECUTED', payload: { convId, planId } });
+      for (const run of response.runs) {
+        dispatch({ type: 'UPSERT_TIMELINE_ITEM', payload: { convId, item: createTimelineItemFromRun(run) } });
+        dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: run.id } });
+        socketService.subscribeRun(run.id);
+      }
+    } catch (e: unknown) {
+      dispatch({ type: 'SET_ERROR', payload: e instanceof Error ? e.message : '执行计划失败' });
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || !convId || sending) return;
     const rawPrompt = input.trim();
@@ -335,58 +350,88 @@ export function ChatArea() {
         const userMessage = await api.createMessage(convId, { content: rawPrompt, mentions: [], messageType: 'text' });
         dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
         await startRun(convId, rawPrompt, agentId, userMessage.id, workspace, dispatch);
-      } else if (hasOrchestratorMention(rawPrompt)) {
-        const prompt = stripOrchestratorMention(rawPrompt) || rawPrompt.replace(/@orchestrator\b/gi, '').trim();
-        const parsed = parseMentions(rawPrompt, state.agents);
-        const userMessage = await api.createMessage(convId, { content: rawPrompt, mentions: parsed.mentions, messageType: 'command' });
-        dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
-        dispatch({ type: 'START_ORCHESTRATOR_PLANNING', payload: { convId, prompt } });
-        const response = await api.orchestrateConversation(convId, prompt, userMessage.id);
-        const plan: PlanCardModel = {
-          id: response.plan.id,
-          conversationId: convId,
-          prompt,
-          summary: response.plan.summary,
-          dagPreview: response.plan.dagPreview,
-          items: response.plan.items.map((item) => ({
-            index: item.index,
-            plannerTaskId: item.plannerTaskId,
-            title: item.title,
-            description: item.description,
-            taskType: item.taskType,
-            expectedOutput: item.expectedOutput,
-            affectedFiles: item.affectedFiles,
-            dependsOn: item.dependsOn,
-            suggestedAgent: item.suggestedAgent,
-            assignedAgentId: item.assignedAgentId,
-            assignedAgentName: item.assignedAgentName,
-            taskId: item.taskId,
-            assignmentId: item.assignmentId,
-            runId: item.runId,
-            status: item.status,
-            outputSummary: item.outputSummary,
-          })),
-          createdAt: new Date().toISOString(),
-        };
-        dispatch({ type: 'ADD_PLAN_CARD', payload: { convId, plan } });
-        dispatch({ type: 'CLEAR_ORCHESTRATOR_PLANNING', payload: { convId } });
-        for (const run of response.runs) {
-          dispatch({ type: 'UPSERT_TIMELINE_ITEM', payload: { convId, item: createTimelineItemFromRun(run) } });
-          dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: run.id } });
-          socketService.subscribeRun(run.id);
-        }
       } else {
+        // Group conversation
         const mentionResult = parseMentions(rawPrompt, state.agents);
-        const prompt = mentionResult.prompt || rawPrompt;
-        const messageType = mentionResult.mentions.length > 0 ? 'command' : 'text';
-        const userMessage = await api.createMessage(convId, { content: rawPrompt, mentions: mentionResult.mentions, messageType });
-        dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
-        const targetAgentIds = mentionResult.agents.length > 0 ? mentionResult.agents.map((agent) => agent.id) : [defaultAgentId].filter((value): value is string => Boolean(value));
-        if (targetAgentIds.length === 0) {
-          dispatch({ type: 'SET_ERROR', payload: '没有可用的 Agent' });
-          return;
+
+        if (mentionResult.agents.length > 0) {
+          // Has explicit @agent mention → direct route
+          const prompt = mentionResult.prompt || rawPrompt;
+          const userMessage = await api.createMessage(convId, {
+            content: rawPrompt,
+            mentions: mentionResult.mentions,
+            messageType: 'command',
+          });
+          dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
+          await Promise.all(
+            mentionResult.agents.map((agent) =>
+              startRun(convId, prompt, agent.id, userMessage.id, workspace, dispatch),
+            ),
+          );
+        } else {
+          // No mention → orchestrate (was @orchestrator)
+          const prompt = stripOrchestratorMention(rawPrompt);
+          const userMessage = await api.createMessage(convId, {
+            content: rawPrompt,
+            mentions: [],
+            messageType: 'command',
+          });
+          dispatch({ type: 'ADD_MESSAGE', payload: { convId, message: userMessage } });
+          dispatch({ type: 'START_ORCHESTRATOR_PLANNING', payload: { convId, prompt } });
+          const response = await api.orchestrateConversation(convId, prompt, userMessage.id);
+
+          if (response.pendingClarification) {
+            dispatch({ type: 'SET_PENDING_CLARIFICATION', payload: { convId } });
+            dispatch({ type: 'CLEAR_ORCHESTRATOR_PLANNING', payload: { convId } });
+            return;
+          }
+
+          if (response.queued) {
+            dispatch({ type: 'CLEAR_ORCHESTRATOR_PLANNING', payload: { convId } });
+            return;
+          }
+
+          dispatch({ type: 'CLEAR_PENDING_CLARIFICATION', payload: { convId } });
+
+          if (response.plan) {
+            const plan: PlanCardModel = {
+              id: response.plan.id,
+              conversationId: convId,
+              prompt,
+              summary: response.plan.summary,
+              dagPreview: response.plan.dagPreview,
+              items: response.plan.items.map((item) => ({
+                index: item.index,
+                plannerTaskId: item.plannerTaskId,
+                title: item.title,
+                description: item.description,
+                taskType: item.taskType,
+                expectedOutput: item.expectedOutput,
+                affectedFiles: item.affectedFiles,
+                dependsOn: item.dependsOn,
+                suggestedAgent: item.suggestedAgent,
+                assignedAgentId: item.assignedAgentId,
+                assignedAgentName: item.assignedAgentName,
+                taskId: item.taskId,
+                assignmentId: item.assignmentId,
+                runId: item.runId,
+                status: item.status,
+                outputSummary: item.outputSummary,
+              })),
+              createdAt: new Date().toISOString(),
+              preview: response.preview,
+            };
+            dispatch({ type: 'ADD_PLAN_CARD', payload: { convId, plan } });
+            dispatch({ type: 'CLEAR_ORCHESTRATOR_PLANNING', payload: { convId } });
+            for (const run of response.runs) {
+              dispatch({ type: 'UPSERT_TIMELINE_ITEM', payload: { convId, item: createTimelineItemFromRun(run) } });
+              dispatch({ type: 'ADD_ACTIVE_RUN', payload: { convId, runId: run.id } });
+              socketService.subscribeRun(run.id);
+            }
+          } else {
+            dispatch({ type: 'CLEAR_ORCHESTRATOR_PLANNING', payload: { convId } });
+          }
         }
-        await Promise.all(targetAgentIds.map((agentId) => startRun(convId, prompt, agentId, userMessage.id, workspace, dispatch)));
       }
     } catch (e: unknown) {
       if (convId) {
@@ -437,7 +482,10 @@ export function ChatArea() {
           projectFileCount={projectFileCount}
         />
         <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-5xl space-y-6 px-8 pb-40 pt-5">
+          <div
+            data-testid="chat-message-list"
+            className="mx-auto flex w-full max-w-[800px] flex-col gap-6 px-8 pb-40 pt-5"
+          >
             {state.error ? (
               <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#FEF2F2', color: 'var(--status-danger)' }}>
                 {state.error}
@@ -454,7 +502,9 @@ export function ChatArea() {
                 singleAgentName={singleAgent?.name ?? null}
               />
             ) : (
-              feedEntries.map((entry) => {
+              <>
+                <div className="contents">
+                {feedEntries.map((entry) => {
                 if (entry.kind === 'message') {
                   return <MessageCard key={entry.key} message={entry.message} agents={state.agents} />;
                 }
@@ -465,6 +515,7 @@ export function ChatArea() {
                       plan={entry.plan}
                       timeline={timeline}
                       onOpenWorkLog={openWorkLog}
+                      onExecute={entry.plan.preview ? () => handleExecutePlan(entry.plan.id) : undefined}
                     />
                   );
                 }
@@ -480,14 +531,26 @@ export function ChatArea() {
                       onOpenLogs={openWorkLog}
                       onRetry={retryRun}
                     />
+                    <RunResponse item={entry.item} />
                     {entry.item.blocks
                       .filter((b) => b.kind === 'approval_request' && b.approvalId)
                       .map((b) => b.kind === 'approval_request' ? <ToolApprovalCard key={b.id} block={b} /> : null)}
                   </div>
                 );
-              })
+              })}
+              </div>
+            </>
             )}
-            {planning ? <SystemMessageIndicator text="@orchestrator 正在分析需求并生成 DAG 任务链..." /> : null}
+            {planning ? <SystemMessageIndicator text="正在分析需求并生成任务计划..." /> : null}
+            {pendingClarification && !planning ? (
+              <div
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                style={{ backgroundColor: '#EFF6FF', color: '#1D4ED8' }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                规划中 · 等待你的回复
+              </div>
+            ) : null}
             <div ref={messagesEndRef} />
           </div>
         </div>
@@ -507,7 +570,7 @@ export function ChatArea() {
               </div>
             </div>
           )}
-          <div className="mx-auto w-full max-w-5xl px-8 pb-6">
+          <div data-testid="chat-composer-shell" className="mx-auto w-[65%] max-w-5xl pb-6">
             <ChatInputArea
               input={input}
               onChange={setInput}
@@ -768,8 +831,8 @@ function ChatInputArea({
             placeholder={conversationType === 'single'
               ? `和 ${selectedSingleAgent?.name ?? 'Agent'} 单聊：直接描述任务，不需要 @`
               : defaultAgentSlug
-                ? `群聊：@builder/@tester 指派，或 @orchestrator 自动拆解（默认 @${defaultAgentSlug}）`
-                : '群聊：@agent-name 指派，或 @orchestrator 自动拆解'}
+                ? `群聊：直接描述需求，或 @${defaultAgentSlug} 指定成员`
+                : '群聊：直接描述需求，或 @成员名 指定成员'}
             rows={1}
             className="min-h-[60px] w-full resize-none bg-transparent pr-12 text-sm leading-relaxed text-gray-800 outline-none placeholder:text-gray-300"
             style={{ maxHeight: '132px', overflowY: 'auto' }}
@@ -823,6 +886,30 @@ function SystemMessageIndicator({ text }: { text: string }) {
   );
 }
 
+function RunResponse({ item }: { item: ChatTimelineItem }) {
+  if (item.status !== 'completed') return null;
+
+  const content = item.blocks
+    .filter((block) => block.kind === 'agent_text')
+    .map((block) => block.content)
+    .join('')
+    .trim();
+
+  if (!content) return null;
+
+  return (
+    <div
+      data-run-response={item.runId}
+      className="w-[65%] py-1 pl-11 pr-2"
+      style={{ color: 'var(--app-text)' }}
+    >
+      <div className="markdown-body text-sm">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdownTables(content)}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
 function MessageCard({ message, agents }: { message: Message; agents: Agent[] }) {
   const isUser = message.sender_type === 'user';
   const agent = agents.find((item) => item.id === message.sender_id);
@@ -869,7 +956,8 @@ function MessageCard({ message, agents }: { message: Message; agents: Agent[] })
       <div
         className="min-w-0"
         style={{
-          maxWidth: isUser ? '70%' : '78%',
+          width: '65%',
+          maxWidth: '65%',
           marginLeft: isUser ? 'auto' : undefined,
           marginRight: isUser ? undefined : 'auto',
         }}
@@ -932,34 +1020,36 @@ function ChatEmptyState({
         { title: '为最近改动补充测试', text: '请为最近的功能改动补充或完善测试' },
       ]
     : [
-        { title: '让 Orchestrator 检查项目结构', text: '@orchestrator 请检查当前项目结构，并建议下一步可以实现的任务' },
-        { title: '指定 builder 干活', text: '@builder 请实现一个小功能，并说明改动位置' },
-        { title: '为最近改动补充测试', text: '@tester 请为最近的功能改动补充或完善测试' },
+        { title: '检查项目结构', text: '请检查当前项目结构，列出主要模块和建议的下一步任务' },
+        { title: '加登录日志功能', text: '帮我加一个用户登录日志功能：记录每次登录的时间、IP、成功/失败，写入数据库，并提供查询接口 GET /logs' },
+        { title: '为登录接口补充测试', text: '请为登录和注册接口补充测试，覆盖正常流程和异常情况' },
       ];
   return (
     <div className="flex flex-col items-center justify-center h-full text-center px-4">
       <div className="max-w-md space-y-6">
         <div className="space-y-3 text-left">
           <GuidanceStep index={1}>
-            {conversationType === 'single' ? '单聊当前 Agent：' : '在群聊里指定成员：'}
+            {conversationType === 'single' ? '直接描述任务：' : '直接描述需求，多 Agent 自动协作：'}
             <InlineCode>
-              {conversationType === 'single' ? '帮我实现一个登录页' : `@${defaultSlug ?? 'agent-name'} 帮我实现一个登录页`}
+              {conversationType === 'single'
+                ? '帮我加一个用户登录日志功能'
+                : '帮我加一个用户登录日志功能，记录时间和 IP'}
             </InlineCode>
           </GuidanceStep>
           <GuidanceStep index={2}>
             {conversationType === 'single' ? (
-              '需要多人协作时，创建群聊会话再 @成员或 @orchestrator'
+              '需要多人协作时，切换到群聊模式'
             ) : (
               <>
-                让 Orchestrator 拆任务：
+                或 @成员名 直接指派给某个 Agent：
                 <InlineCode>
-                  @orchestrator 帮我实现登录页和登录接口
+                  @{defaultSlug ?? 'codex-cli'} 帮我优化登录接口性能
                 </InlineCode>
               </>
             )}
           </GuidanceStep>
           <GuidanceStep index={3}>
-            Run 完成后可以查看 Diff、启动 Preview、确认 Apply，并清理临时工作区
+            Run 完成后可以查看文件变更，点击任务卡了解详情
           </GuidanceStep>
         </div>
         <div className="space-y-2">

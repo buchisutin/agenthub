@@ -459,11 +459,19 @@ export const api = {
     conversationId: string,
     prompt: string,
     sourceMessageId?: string,
+    preview?: boolean,
   ): Promise<OrchestrateResponse> {
     const res = await fetch(`${BASE_URL}/conversations/${conversationId}/orchestrate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, sourceMessageId }),
+      body: JSON.stringify({ prompt, sourceMessageId, preview }),
+    });
+    return handleResponse(res);
+  },
+
+  async executePlan(planMessageId: string): Promise<OrchestrateResponse> {
+    const res = await fetch(`${BASE_URL}/plans/${planMessageId}/execute`, {
+      method: 'POST',
     });
     return handleResponse(res);
   },

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { spawn } from "node:child_process";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import { WorkspacesService } from "./workspaces.service.js";
 import { WorkspaceDiffService } from "./workspace-diff.service.js";
@@ -26,6 +27,23 @@ export function createWorkspacesRouter(
     }
 
     res.json(workspace);
+  });
+
+  router.post("/system/pick-directory", (_req, res) => {
+    const script = [
+      'tell application "Finder"',
+      '  set chosen to choose folder with prompt "选择项目目录"',
+      '  return POSIX path of chosen',
+      'end tell',
+    ].join('\n');
+    const proc = spawn('osascript', [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    proc.stdin.write(script);
+    proc.stdin.end();
+    proc.on('close', (code) => {
+      res.json({ path: code === 0 ? stdout.trim().replace(/\/$/, '') : null });
+    });
   });
 
   router.post("/workspaces/validate", (req, res) => {

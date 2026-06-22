@@ -424,6 +424,7 @@ export interface OrchestrateResponse {
   runs: RunSummary[];
   queued?: boolean;
   pendingClarification?: boolean;
+  preview?: boolean;
 }
 
 export type ConversationTimelineItem =

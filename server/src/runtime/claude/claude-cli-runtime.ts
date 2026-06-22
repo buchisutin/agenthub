@@ -114,6 +114,11 @@ export class ClaudeCliRuntime implements AgentRuntime {
     args.push(input.prompt);
 
     const spawnEnv = { ...process.env };
+    // Force API-key-only auth so OAuth is never used. This lets the subprocess
+    // use ANTHROPIC_API_KEY (from ~/.claude/settings.json env) with whatever
+    // ANTHROPIC_BASE_URL is configured, without the stored OAuth token
+    // interfering.
+    spawnEnv.CLAUDE_CODE_SIMPLE = "1";
     if (hitlEnabled) {
       this.writeHitlHook(input.workspacePath);
       spawnEnv.AGENTHUB_RUN_ID = input.runId;

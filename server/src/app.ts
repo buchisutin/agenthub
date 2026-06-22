@@ -1,4 +1,5 @@
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import cors from "cors";
 import express from "express";
 import { getEnvConfig, type EnvConfig } from "./config/env.js";
@@ -113,7 +114,18 @@ export function createAgentHubServer(
       return ws?.root_path ?? null;
     },
     getFileChanges: (id) => runsService.getFileChanges(id),
-    onWorkspaceChanged: (event) => realtimeServer.emitWorkspaceChanged(event),
+    onWorkspaceChanged: (event) => {
+      realtimeServer.emitWorkspaceChanged(event);
+      // Auto-commit merged changes to the main workspace so it stays clean
+      // and subsequent tasks can start without "uncommitted changes" errors.
+      const ws = workspacesService.getById(event.workspaceId);
+      if (ws?.root_path) {
+        try {
+              spawnSync("git", ["add", "-A"], { cwd: ws.root_path });
+          spawnSync("git", ["commit", "-m", "chore: apply agent changes [agenthub]"], { cwd: ws.root_path });
+        } catch { /* ignore git errors */ }
+      }
+    },
   });
 
   if (workspaceIsolationService) {

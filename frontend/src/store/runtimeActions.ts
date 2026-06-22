@@ -3,7 +3,7 @@ import { api } from '../services/api';
 import { socketService } from '../services/socket';
 import type { PlanCardModel, Workspace } from '../types';
 import type { Action } from './appState';
-import { createTimelineItemFromRun } from './timeline';
+import { applyRunDetail, createTimelineItemFromRun } from './timeline';
 
 function planFromTimelineMessage(
   message: {
@@ -62,10 +62,22 @@ export async function loadConversationRuntime(
     const plans = timeline
       .filter((item) => item.type === 'plan')
       .map((item) => planFromTimelineMessage(item.message, item.plan));
-    const items = timeline
-      .filter((item) => item.type === 'run')
-      .map((item) => createTimelineItemFromRun(item.run))
-      .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    const items = (await Promise.all(
+      timeline
+        .filter((item) => item.type === 'run')
+        .map(async (item) => {
+          if ('events' in item.run) {
+            return applyRunDetail(item.run);
+          }
+          if (item.run.event_count > 0) {
+            const detail = await api.getRun(item.run.id).catch(() => null);
+            if (detail) {
+              return applyRunDetail(detail);
+            }
+          }
+          return createTimelineItemFromRun(item.run);
+        }),
+    )).sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
 
     dispatch({
       type: 'SET_CONVERSATION_CONTENT',

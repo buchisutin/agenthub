@@ -208,10 +208,12 @@ export function PlanCard({
   plan,
   timeline,
   onOpenWorkLog,
+  onExecute,
 }: {
   plan: PlanCardModel;
   timeline?: ChatTimelineItem[];
   onOpenWorkLog?: (runId: string) => void;
+  onExecute?: () => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -246,6 +248,8 @@ export function PlanCard({
   const runningCount = (colMap.get('running') ?? []).length;
   const attentionCount = (colMap.get('attention') ?? []).length;
   const allDone = completedCount === totalCount && totalCount > 0;
+  const allItemsPending = plan.items.every((item) => item.status === 'pending');
+  const isPreview = plan.preview === true;
 
   const totalFileChanges = useMemo(() => {
     let count = 0;
@@ -266,7 +270,7 @@ export function PlanCard({
   }, [allDone, completedCount, totalCount, runningCount, attentionCount, totalFileChanges]);
 
   return (
-    <div className="agenthub-card overflow-hidden">
+    <div className="agenthub-card w-full overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -336,6 +340,18 @@ export function PlanCard({
             );
           })}
         </div>
+        {isPreview && allItemsPending && onExecute && (
+          <div className="px-4 pb-4">
+            <button
+              type="button"
+              onClick={onExecute}
+              className="w-full rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
+              style={{ backgroundColor: '#1D4ED8' }}
+            >
+              开始执行
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

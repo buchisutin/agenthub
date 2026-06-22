@@ -53,7 +53,7 @@ interface PlannerResultCandidate {
   tasks: PlannerTaskCandidate[];
 }
 
-const DEFAULT_RUN_TIMEOUT_MS = 120_000;
+const DEFAULT_RUN_TIMEOUT_MS = 600_000;  // 10 min per run
 const MIN_WATCH_TIMEOUT_MS = 30_000;
 const SLOW_WATCHER_TICK_MS = 200;
 const SLOW_PLAN_POLL_MS = 100;
@@ -574,6 +574,7 @@ export class OrchestratorService {
     conversationId: string,
     prompt: string,
     sourceMessageId?: string,
+    options?: { preview?: boolean },
   ): Promise<OrchestrateResponse> {
     const conversation = this.conversationsService.getById(conversationId);
     if (!conversation) {
@@ -719,6 +720,61 @@ export class OrchestratorService {
         predictedConflictGroups: buildPredictedConflictGroups(plannerResult.tasks),
       },
     });
+    // Preview mode: create plan message with items but no task records / scheduler
+    if (options?.preview) {
+      const items: TaskPlanItem[] = assignments.map(({ index, task, agent }) => ({
+        index: index + 1,
+        plannerTaskId: task.id,
+        title: task.title || summarizePrompt(prompt),
+        description: task.description || task.title || prompt,
+        taskType: task.task_type,
+        expectedOutput: task.expected_output,
+        affectedFiles: task.affected_files,
+        dependsOn: task.depends_on,
+        suggestedAgent: task.suggested_agent,
+        assignedAgentId: agent.id,
+        assignedAgentName: agent.name,
+        priority: clampPriority(task.priority),
+        taskId: '',
+        assignmentId: '',
+        runId: null,
+        status: 'pending' as const,
+        outputSummary: null,
+      }));
+      this.messagesService.updateMessageMetadata(planMessage.id, {
+        planId,
+        sourceMessageId: sourceMessageId ?? null,
+        summary: plannerResult.summary,
+        items,
+        dagPreview: {
+          levels: dagPreview.levels.map((level) => level.map((task) => task.id)),
+          text: dagPreview.text,
+        },
+        preview: true,
+        plannerResult: { summary: plannerResult.summary, tasks: plannerResult.tasks },
+        predictedConflictGroups: buildPredictedConflictGroups(plannerResult.tasks),
+      });
+      this.deps.emitEvent?.({
+        type: "orchestrator_planning_done",
+        conversationId,
+        planId,
+        summary: plannerResult.summary,
+      });
+      return {
+        plan: {
+          id: planId,
+          summary: plannerResult.summary,
+          items,
+          dagPreview: {
+            levels: dagPreview.levels.map((level) => level.map((task) => task.id)),
+            text: dagPreview.text,
+          },
+        },
+        runs: [],
+        preview: true,
+      };
+    }
+
     const items: TaskPlanItem[] = [];
     const taskContexts: OrchestratedTaskContext[] = [];
 
@@ -1179,6 +1235,268 @@ export class OrchestratorService {
     };
   }
 
+  async executePlan(planMessageId: string): Promise<OrchestrateResponse> {
+    const planMessage = this.messagesService.getById(planMessageId);
+    if (!planMessage || planMessage.message_type !== "plan") {
+      throw new Error("Plan not found");
+    }
+
+    const metadata = planMessage.metadata_json ?? {};
+    if (!metadata.preview) {
+      throw new Error("Plan is not in preview state");
+    }
+
+    const conversationId = planMessage.conversation_id;
+    const summary = typeof metadata.summary === "string" ? metadata.summary : planMessage.content;
+    const sourceMessageId = typeof metadata.sourceMessageId === "string" ? metadata.sourceMessageId : undefined;
+    const storedPlanResult = metadata.plannerResult as { summary: string; tasks: PlannerTask[] } | undefined;
+    const rawItems = Array.isArray(metadata.items) ? (metadata.items as unknown as TaskPlanItem[]) : [];
+    const planId = typeof metadata.planId === "string" ? metadata.planId : crypto.randomUUID();
+    const dagPreview = metadata.dagPreview && typeof metadata.dagPreview === "object"
+      ? metadata.dagPreview as TaskPlan["dagPreview"]
+      : undefined;
+
+    if (!storedPlanResult || !Array.isArray(storedPlanResult.tasks) || storedPlanResult.tasks.length === 0) {
+      throw new Error("Invalid plan data in metadata");
+    }
+
+    const tasks = storedPlanResult.tasks;
+    const enabledAgents = this.agentsService.listAgents();
+
+    // Rebuild agent map from stored items
+    const agentMap = new Map<string, AgentRecord>();
+    for (const item of rawItems) {
+      if (item.assignedAgentId && !agentMap.has(item.assignedAgentId)) {
+        const agent = enabledAgents.find((a) => a.id === item.assignedAgentId);
+        if (agent) agentMap.set(item.assignedAgentId, agent);
+      }
+    }
+
+    // Create task records and assignments
+    const items: TaskPlanItem[] = [];
+    const taskContexts: OrchestratedTaskContext[] = [];
+    const workspacePath =
+      this.workspacesService.getByConversationId(conversationId)?.root_path ??
+      path.resolve(process.cwd());
+
+    for (let index = 0; index < tasks.length; index++) {
+      const task = tasks[index];
+      const existingItem = rawItems[index];
+      const agent = existingItem && existingItem.assignedAgentId
+        ? (agentMap.get(existingItem.assignedAgentId) ?? this.agentsService.getDefaultAgent())
+        : this.agentsService.getDefaultAgent();
+
+      if (!agent) {
+        throw new Error("No available agent");
+      }
+
+      const taskRecord = this.tasksService.create({
+        conversationId,
+        sourceMessageId: sourceMessageId ?? null,
+        planMessageId,
+        title: task.title || summarizePrompt(storedPlanResult.summary),
+        description: task.description || task.title,
+        dependsOn: task.depends_on,
+        taskType: task.task_type,
+        expectedOutput: task.expected_output,
+        status: "pending",
+        priority: clampPriority(task.priority),
+        createdByType: "orchestrator",
+      });
+
+      const assignmentRecord = this.assignmentsService.createAssignment({
+        taskId: taskRecord.id,
+        conversationId,
+        agentId: agent.id,
+        status: "pending",
+        assignedByType: "orchestrator",
+      });
+
+      items.push({
+        index: index + 1,
+        plannerTaskId: task.id,
+        title: task.title || summarizePrompt(storedPlanResult.summary),
+        description: task.description || task.title,
+        taskType: task.task_type,
+        expectedOutput: task.expected_output,
+        affectedFiles: task.affected_files,
+        dependsOn: task.depends_on,
+        suggestedAgent: task.suggested_agent,
+        assignedAgentId: agent.id,
+        assignedAgentName: agent.name,
+        priority: clampPriority(task.priority),
+        taskId: taskRecord.id,
+        assignmentId: assignmentRecord.id,
+        runId: null,
+        status: "pending",
+        outputSummary: null,
+      });
+
+      taskContexts.push({
+        plannerTask: task,
+        agent,
+        taskRecordId: taskRecord.id,
+        assignmentId: assignmentRecord.id,
+      });
+    }
+
+    const maxWatchMs = this.computePlanMaxWatchMs(taskContexts.map((ctx) => ctx.agent));
+    const schedulerState: ActivePlanScheduler = {
+      scheduler: null as unknown as DagScheduler,
+      planId,
+      summary,
+      sourceMessageId,
+      workspacePath,
+      planMessageId,
+      conversationId,
+      itemsByPlannerTaskId: new Map(taskContexts.map((ctx, i) => [ctx.plannerTask.id, items[i]!])),
+      taskContextByPlannerTaskId: new Map(taskContexts.map((ctx) => [ctx.plannerTask.id, ctx])),
+      plannerTaskIdByTaskRecordId: new Map(taskContexts.map((ctx) => [ctx.taskRecordId, ctx.plannerTask.id])),
+      seenTerminalTaskIds: new Set(),
+      blockedTaskIds: new Set(),
+      runIds: new Set(),
+    };
+
+    // Update plan message: remove preview markers, store real task data
+    this.messagesService.updateMessageMetadata(planMessageId, {
+      ...metadata,
+      items,
+      taskIds: taskContexts.map((ctx) => ctx.taskRecordId),
+      assignmentIds: taskContexts.map((ctx) => ctx.assignmentId),
+      watchStatus: "watching",
+      watchStartedAt: new Date().toISOString(),
+      maxWatchMs,
+      preview: undefined,
+      plannerResult: undefined,
+    });
+
+    // Create and start scheduler
+    let scheduler: DagScheduler;
+    scheduler = new DagScheduler(
+      tasks,
+      async (task) => {
+        const context = taskContexts.find((entry) => entry.plannerTask.id === task.id);
+        if (!context) return;
+        try {
+          this.tasksService.updateTaskStatus(context.taskRecordId, "assigned");
+          const run = this.runManager.createRun({
+            conversationId,
+            agentId: context.agent.id,
+            prompt: buildTaskRunPrompt(task, schedulerState),
+            taskId: context.taskRecordId,
+            assignmentId: context.assignmentId,
+            sourceMessageId: planMessageId,
+          });
+          this.assignmentsService.updateAssignmentStatus(context.assignmentId, "pending", run.id);
+          const item = schedulerState.itemsByPlannerTaskId.get(task.id);
+          if (item) {
+            item.runId = run.id;
+            item.status = run.status;
+          }
+          schedulerState.runIds.add(run.id);
+          this.persistPlanState(schedulerState, planId, summary, sourceMessageId);
+        } catch (error) {
+          this.tasksService.updateTaskStatus(context.taskRecordId, "failed");
+          const item = schedulerState.itemsByPlannerTaskId.get(task.id);
+          if (item) item.status = "failed";
+          this.persistPlanState(schedulerState, planId, summary, sourceMessageId);
+          await scheduler.notifyFailed(task.id);
+          throw error;
+        }
+      },
+      () => {
+        const current = this.messagesService.getById(planMessageId);
+        const currentMetadata = current?.metadata_json ?? {};
+        const runDetails = Array.from(schedulerState.runIds)
+          .map((runId) => this.runManager.getRun(runId))
+          .filter((run): run is NonNullable<typeof run> => Boolean(run));
+        const startedAt = runDetails.reduce<number | null>((earliest, run) => {
+          const value = new Date(run.started_at).getTime();
+          return earliest === null || value < earliest ? value : earliest;
+        }, null);
+        const finishedAt = runDetails.reduce<number | null>((latest, run) => {
+          const value = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
+          return latest === null || value > latest ? value : latest;
+        }, null);
+        const totalDurationSeconds =
+          startedAt !== null && finishedAt !== null
+            ? Math.max(1, Math.round((finishedAt - startedAt) / 1000))
+            : null;
+        this.messagesService.updateMessageMetadata(planMessageId, {
+          ...currentMetadata,
+          watchStatus: "completed",
+        });
+        this.messagesService.createMessage({
+          conversationId,
+          senderType: "orchestrator",
+          content:
+            `📋 协作计划已全部完成：${tasks.length} 个任务` +
+            (totalDurationSeconds ? `，总耗时 ${totalDurationSeconds}s` : ""),
+          messageType: "system",
+          metadata: {
+            planMessageId,
+            runIds: Array.from(schedulerState.runIds),
+            totalDurationSeconds,
+          },
+        });
+        const [nextQueued] = this.messagesService.listQueuedPrompts(conversationId);
+        if (nextQueued) {
+          this.messagesService.markQueuedPromptConsumed(nextQueued.id);
+          void this.orchestrateConversation(conversationId, nextQueued.content, undefined).catch(
+            (err) => console.error("[queue drain error]", err),
+          );
+        }
+        this.activePlanSchedulers.delete(planMessageId);
+      },
+      (task, reason) => {
+        const context = taskContexts.find((entry) => entry.plannerTask.id === task.id);
+        if (!context || schedulerState.blockedTaskIds.has(task.id)) return;
+        schedulerState.blockedTaskIds.add(task.id);
+        this.tasksService.updateTaskStatus(context.taskRecordId, "blocked");
+        const item = schedulerState.itemsByPlannerTaskId.get(task.id);
+        if (item) item.status = "blocked";
+        this.persistPlanState(schedulerState, planId, summary, sourceMessageId);
+        this.messagesService.createMessage({
+          conversationId,
+          senderType: "orchestrator",
+          content: `任务 ${task.title} 已阻塞：${reason}`,
+          messageType: "system",
+          metadata: {
+            planMessageId,
+            taskId: context.taskRecordId,
+            plannerTaskId: task.id,
+            reason,
+          },
+        });
+      },
+    );
+
+    schedulerState.scheduler = scheduler;
+    this.activePlanSchedulers.set(planMessageId, schedulerState);
+    await scheduler.start();
+
+    const runs = this.runManager
+      .listRuns(conversationId)
+      .filter((run) => schedulerState.runIds.has(run.id))
+      .sort((a, b) => {
+        const aIndex = items.findIndex((item) => item.runId === a.id);
+        const bIndex = items.findIndex((item) => item.runId === b.id);
+        return aIndex - bIndex;
+      });
+
+    this.ensureWatcherScheduler();
+
+    return {
+      plan: {
+        id: planId,
+        summary,
+        items: Array.from(schedulerState.itemsByPlannerTaskId.values()).sort((a, b) => a.index - b.index),
+        dagPreview,
+      },
+      runs,
+    };
+  }
+
   hasSuspendedPlannerSession(conversationId: string): boolean {
     return this.deps.plannerAgentService?.hasSuspendedSession(conversationId) ?? false;
   }
@@ -1306,8 +1624,32 @@ export class OrchestratorService {
     const toPoll: typeof watchingPlans = [];
     for (const planMessage of watchingPlans) {
       if (!this.activePlanSchedulers.has(planMessage.id)) {
-        // Scheduler was lost on server restart — fail fast rather than leaving the plan stuck
-        this.handleRestartInterruption(planMessage);
+        const metadata = planMessage.metadata_json ?? {};
+        const runIds = Array.isArray(metadata.runIds)
+          ? metadata.runIds.filter((id): id is string => typeof id === "string")
+          : [];
+        const runs = runIds
+          .map((id) => this.runManager.getRun(id))
+          .filter((r): r is NonNullable<typeof r> => Boolean(r));
+        const terminalStatuses = new Set<string>(["completed", "failed", "interrupted"]);
+        const allTerminal =
+          runs.length === runIds.length && runs.every((r) => terminalStatuses.has(r.status));
+        const rawItems = Array.isArray(metadata.items) ? metadata.items : [];
+        const hasPendingItems = rawItems.some(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            !["completed", "failed", "blocked"].includes((item as TaskPlanItem).status as string),
+        );
+        if (allTerminal && hasPendingItems) {
+          // All dispatched runs finished but some tasks are still pending.
+          // This happens when the server restarts mid-plan. Let the watcher
+          // restore and continue rather than interrupting.
+          toPoll.push(planMessage);
+        } else {
+          // Runs are still in-progress (or no runs) — can't resume, fail fast.
+          this.handleRestartInterruption(planMessage);
+        }
       } else {
         toPoll.push(planMessage);
       }
@@ -1336,6 +1678,219 @@ export class OrchestratorService {
       this.watcherTimer = null;
       void this.runWatcherTick();
     }, this.deps.pollIntervalMs ?? 250);
+  }
+
+  private async restorePlanFromMetadata(
+    planMessage: MessageRecord,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    const rawItems = Array.isArray(metadata.items) ? metadata.items : [];
+    const allItems = rawItems
+      .map((item, index) =>
+        item && typeof item === "object"
+          ? { ...(item as TaskPlanItem), plannerTaskId: (item as TaskPlanItem).plannerTaskId ?? `t${index + 1}`, dependsOn: (item as TaskPlanItem).dependsOn ?? [] }
+          : null,
+      )
+      .filter((item): item is TaskPlanItem & { plannerTaskId: string; dependsOn: string[] } => Boolean(item));
+
+    // Use actual task DB status (not stale metadata status) to determine what's truly pending.
+    // Metadata status can be stale if the server was restarted before it was updated.
+    const actuallyCompleted = new Set<string>();
+    for (const item of allItems) {
+      const taskRecord = this.tasksService.getById(item.taskId);
+      if (!taskRecord) {
+        continue;
+      }
+      if (taskRecord.status === "completed") {
+        actuallyCompleted.add(item.plannerTaskId);
+        if (item.status !== "completed") {
+          item.status = "completed";
+        }
+        continue;
+      }
+      // Also check if the run itself completed — trigger merge if needed
+      const assignment = this.assignmentsService.listAssignmentsByTask(item.taskId)[0];
+      const latestRunId = assignment?.latest_run_id;
+      if (latestRunId && this.deps.mergeService) {
+        const run = this.runManager.getRun(latestRunId);
+        if (run?.status === "completed") {
+          let mergeRecord = this.deps.mergeService.getByRunId(latestRunId);
+          if (!mergeRecord) {
+            try {
+              mergeRecord = this.deps.mergeService.mergeRunToMain(latestRunId).merge;
+            } catch {
+              mergeRecord = null;
+            }
+          }
+          if (mergeRecord && (mergeRecord.status === "auto_merged" || mergeRecord.status === "conflict_resolved")) {
+            actuallyCompleted.add(item.plannerTaskId);
+            item.status = "completed";
+            this.tasksService.updateTaskStatus(item.taskId, "completed");
+          }
+        }
+      }
+    }
+
+    const pendingItems = allItems.filter(
+      (item) => item.status !== "completed" && item.status !== "failed" && item.status !== "blocked",
+    );
+    if (pendingItems.length === 0) {
+      return;
+    }
+
+    const pendingIdSet = new Set(pendingItems.map((item) => item.plannerTaskId));
+    const planMessageId = planMessage.id;
+    const planId = typeof metadata.planId === "string" ? metadata.planId : crypto.randomUUID();
+    const summary = typeof metadata.summary === "string" ? metadata.summary : planMessage.content;
+    const sourceMessageId = typeof metadata.sourceMessageId === "string" ? metadata.sourceMessageId : undefined;
+    const workspacePath =
+      this.workspacesService.getByConversationId(planMessage.conversation_id)?.root_path ??
+      path.resolve(process.cwd());
+
+    const plannerTasks: PlannerTask[] = [];
+    const taskContexts: OrchestratedTaskContext[] = [];
+
+    for (const item of pendingItems) {
+      const taskRecord = this.tasksService.getById(item.taskId);
+      if (!taskRecord) {
+        continue;
+      }
+      const assignment = this.assignmentsService.listAssignmentsByTask(item.taskId)[0];
+      if (!assignment) {
+        continue;
+      }
+      const agent = this.agentsService.getById(assignment.agent_id);
+      if (!agent) {
+        continue;
+      }
+      const plannerTask: PlannerTask = {
+        id: item.plannerTaskId,
+        title: item.title,
+        description: item.description,
+        task_type: item.taskType ?? "general",
+        expected_output: item.expectedOutput ?? "Complete the requested change and summarize the result.",
+        affected_files: item.affectedFiles ?? [],
+        suggested_agent: item.suggestedAgent ?? null,
+        priority: item.priority,
+        depends_on: (item.dependsOn).filter((depId) => pendingIdSet.has(depId)),
+      };
+      plannerTasks.push(plannerTask);
+      taskContexts.push({
+        plannerTask,
+        agent,
+        taskRecordId: item.taskId,
+        assignmentId: assignment.id,
+      });
+      this.tasksService.updateTaskStatus(item.taskId, "pending");
+    }
+
+    if (plannerTasks.length === 0) {
+      return;
+    }
+
+    const terminalTaskIds = new Set(
+      allItems
+        .filter((item) => item.status === "completed" || item.status === "failed" || item.status === "blocked")
+        .map((item) => item.taskId),
+    );
+
+    const state: ActivePlanScheduler = {
+      scheduler: null as unknown as DagScheduler,
+      planId,
+      summary,
+      sourceMessageId,
+      workspacePath,
+      planMessageId,
+      conversationId: planMessage.conversation_id,
+      itemsByPlannerTaskId: new Map(allItems.map((item) => [item.plannerTaskId, item])),
+      taskContextByPlannerTaskId: new Map(taskContexts.map((ctx) => [ctx.plannerTask.id, ctx])),
+      plannerTaskIdByTaskRecordId: new Map(taskContexts.map((ctx) => [ctx.taskRecordId, ctx.plannerTask.id])),
+      seenTerminalTaskIds: terminalTaskIds,
+      blockedTaskIds: new Set(),
+      runIds: new Set(
+        Array.isArray(metadata.runIds)
+          ? metadata.runIds.filter((id): id is string => typeof id === "string")
+          : [],
+      ),
+    };
+
+    let scheduler!: DagScheduler;
+    scheduler = new DagScheduler(
+      plannerTasks,
+      async (task) => {
+        const context = state.taskContextByPlannerTaskId.get(task.id);
+        if (!context) {
+          return;
+        }
+        try {
+          this.tasksService.updateTaskStatus(context.taskRecordId, "assigned");
+          const run = this.runManager.createRun({
+            conversationId: planMessage.conversation_id,
+            agentId: context.agent.id,
+            prompt: buildTaskRunPrompt(task, state),
+            taskId: context.taskRecordId,
+            assignmentId: context.assignmentId,
+            sourceMessageId: planMessage.id,
+          });
+          this.assignmentsService.prepareAssignmentRerun(context.assignmentId, {
+            agentId: context.agent.id,
+            latestRunId: run.id,
+            status: "pending",
+          });
+          const item = state.itemsByPlannerTaskId.get(task.id);
+          if (item) {
+            item.runId = run.id;
+            item.status = run.status;
+          }
+          state.runIds.add(run.id);
+          this.persistPlanState(state, planId, summary, sourceMessageId);
+        } catch (error) {
+          this.tasksService.updateTaskStatus(context.taskRecordId, "failed");
+          const item = state.itemsByPlannerTaskId.get(task.id);
+          if (item) {
+            item.status = "failed";
+          }
+          this.persistPlanState(state, planId, summary, sourceMessageId);
+          await scheduler.notifyFailed(task.id);
+          throw error;
+        }
+      },
+      () => {
+        const current = this.messagesService.getById(planMessageId);
+        this.messagesService.updateMessageMetadata(planMessageId, {
+          ...(current?.metadata_json ?? {}),
+          watchStatus: "completed",
+        });
+        this.activePlanSchedulers.delete(planMessageId);
+      },
+      (task, reason) => {
+        const context = state.taskContextByPlannerTaskId.get(task.id);
+        if (!context) {
+          return;
+        }
+        this.tasksService.updateTaskStatus(context.taskRecordId, "blocked");
+        const item = state.itemsByPlannerTaskId.get(task.id);
+        if (item) {
+          item.status = "blocked";
+        }
+        this.persistPlanState(state, planId, summary, sourceMessageId);
+      },
+    );
+
+    state.scheduler = scheduler;
+    this.activePlanSchedulers.set(planMessageId, state);
+    // Reset watch timing so restored plan doesn't immediately time out
+    const maxWatchMs = this.computePlanMaxWatchMs(taskContexts.map((ctx) => ctx.agent));
+    const current = this.messagesService.getById(planMessageId);
+    this.messagesService.updateMessageMetadata(planMessageId, {
+      ...(current?.metadata_json ?? {}),
+      watchStatus: "watching",
+      watchStartedAt: new Date().toISOString(),
+      maxWatchMs,
+    });
+    this.persistPlanState(state, planId, summary, sourceMessageId);
+    await scheduler.start();
+    this.ensureWatcherScheduler();
   }
 
   private persistPlanState(
@@ -1457,6 +2012,19 @@ export class OrchestratorService {
           failedRunIds: failedRuns.map((run) => run.id),
         });
         return true;
+      }
+      // All known runs completed — check if the plan has pending tasks that weren't dispatched
+      // (happens when the server restarts mid-plan and the in-memory scheduler is lost)
+      const rawItems = Array.isArray(metadata.items) ? metadata.items : [];
+      const hasPendingItems = rawItems.some(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          !["completed", "failed", "blocked"].includes((item as TaskPlanItem).status as string),
+      );
+      if (hasPendingItems) {
+        await this.restorePlanFromMetadata(planMessage, metadata);
+        return false;
       }
       return true;
     }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../services/api';
 import type {
   PreviewStartResponse,
@@ -181,6 +181,58 @@ function ProjectPreviewView({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+function ScriptDropdown({ scripts, value, onChange }: { scripts: string[]; value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
+        style={{ border: '0.5px solid var(--app-border)', background: 'var(--card-bg)', color: 'var(--app-text)' }}
+      >
+        <span>{value || '选择脚本'}</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ opacity: 0.5 }}>
+          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          className="absolute left-0 top-full z-50 mt-1 min-w-full rounded-lg py-1 shadow-lg"
+          style={{ background: 'var(--card-bg)', border: '0.5px solid var(--app-border)' }}
+        >
+          {scripts.map((script) => (
+            <button
+              key={script}
+              type="button"
+              onClick={() => { onChange(script); setOpen(false); }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--card-subtle)]"
+              style={{ color: 'var(--app-text)' }}
+            >
+              {script === value && (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+              <span style={{ paddingLeft: script === value ? 0 : 20 }}>{script}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectDeployView({ workspaceId }: { workspaceId: string }) {
   const [scripts, setScripts] = useState<WorkspaceDeployScriptsResponse | null>(null);
   const [selectedScript, setSelectedScript] = useState('');
@@ -217,9 +269,7 @@ function ProjectDeployView({ workspaceId }: { workspaceId: string }) {
     <div className="space-y-3">
       {scripts && scripts.scripts.length > 0 ? (
         <div className="flex items-center gap-2">
-          <select value={selectedScript} onChange={(event) => setSelectedScript(event.target.value)} className="rounded-lg px-3 py-2 text-sm" style={{ border: '0.5px solid var(--app-border)' }}>
-            {scripts.scripts.map((script) => <option key={script} value={script}>{script}</option>)}
-          </select>
+          <ScriptDropdown scripts={scripts.scripts} value={selectedScript} onChange={setSelectedScript} />
           <button type="button" onClick={() => void startDeploy()} className="rounded-lg bg-[#2E6B4F] px-4 py-2 text-sm text-white">部署</button>
         </div>
       ) : (

@@ -269,6 +269,7 @@ function renderChatArea({
     timeline,
     plansByConversation,
     activeRunIdsByConversation,
+    pendingClarificationConvIds: [],
     connected: true,
     loadingConvs: false,
     loadingAgents: false,
@@ -329,6 +330,7 @@ function renderChatAreaStateful({
     timeline,
     plansByConversation,
     activeRunIdsByConversation,
+    pendingClarificationConvIds: [],
     connected: true,
     loadingConvs: false,
     loadingAgents: false,
@@ -413,12 +415,30 @@ describe('ChatArea mention fan-out', () => {
     expect(topBar.style.borderBottomColor).toBe('rgba(23, 49, 34, 0.08)');
   });
 
+  it('centers messages in an 800px column with 24px vertical gaps', () => {
+    renderChatArea({ agents: [] });
+
+    const list = screen.getByTestId('chat-message-list');
+    expect(list.className).toContain('max-w-[800px]');
+    expect(list.className).toContain('mx-auto');
+    expect(list.className).toContain('flex-col');
+    expect(list.className).toContain('gap-6');
+  });
+
   it('gives the chat composer a soft green-tinted shadow without a visible border', () => {
     renderChatArea({ agents: [] });
 
     const composer = screen.getByTestId('chat-composer');
     expect(composer.style.boxShadow).toBe('0 10px 25px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.03)');
     expect(composer.className).not.toContain('border-gray-200');
+  });
+
+  it('centers the chat composer at 65 percent of the conversation width', () => {
+    renderChatArea({ agents: [] });
+
+    const shell = screen.getByTestId('chat-composer-shell');
+    expect(shell.className).toContain('w-[65%]');
+    expect(shell.className).toContain('mx-auto');
   });
 
   it('opens a white custom Agent menu with the same floating shadow recipe', () => {
@@ -464,7 +484,37 @@ describe('ChatArea mention fan-out', () => {
     fireEvent.click(await screen.findByRole('button', { name: /claude-code.*Completed/ }));
 
     expect(await screen.findByRole('complementary', { name: '工作日志' })).toBeTruthy();
-    expect(screen.getByText('isolated run output')).toBeTruthy();
+    expect(screen.getAllByText('isolated run output')).toHaveLength(2);
+  });
+
+  it('shows the completed agent response in the main conversation', () => {
+    const agents = [makeAgent('agent-default', 'claude-code')];
+    renderChatArea({
+      agents,
+      conversationType: 'single',
+      timeline: {
+        'conv-1': [
+          {
+            id: 'run-response',
+            conversationId: 'conv-1',
+            runId: 'run-response',
+            taskId: null,
+            agentId: 'agent-default',
+            agentName: 'claude-code',
+            agentSessionId: null,
+            prompt: '你好',
+            status: 'completed',
+            startedAt: '2026-06-21T10:23:32.000Z',
+            finishedAt: '2026-06-21T10:23:35.000Z',
+            detailsLoaded: true,
+            blocks: [{ kind: 'agent_text', id: 'text-response', content: '你好，我可以正常回复。' }],
+            error: null,
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText('你好，我可以正常回复。')).toBeTruthy();
   });
 
   it('reruns a failed task run through rerunTask', async () => {
@@ -644,9 +694,9 @@ describe('ChatArea mention fan-out', () => {
           {
             id: 'msg-agent',
             conversation_id: 'conv-1',
-            sender_type: 'agent',
-            sender_id: 'builder',
-            content: '你好！',
+            sender_type: 'orchestrator',
+            sender_id: null,
+            content: '所有任务已完成合并',
             message_type: 'text',
             mentions: null,
             metadata_json: null,
@@ -657,7 +707,9 @@ describe('ChatArea mention fan-out', () => {
     });
 
     const userCard = screen.getByText('你好').closest('[data-message-role="user"]');
-    const agentCard = screen.getByText('你好！').closest('[data-message-role="agent"]');
+    const agentCard = screen.getByText('所有任务已完成合并').closest('[data-message-role="agent"]');
+    const userMessage = userCard?.firstElementChild as HTMLDivElement | null;
+    const agentMessage = agentCard?.firstElementChild as HTMLDivElement | null;
     const userBubble = userCard?.querySelector('[data-message-content="user"]') as HTMLDivElement | null;
     const agentContent = agentCard?.querySelector('[data-message-content="agent"]') as HTMLDivElement | null;
 
@@ -665,6 +717,10 @@ describe('ChatArea mention fan-out', () => {
     expect(agentCard).not.toBeNull();
     expect(userCard?.getAttribute('class')).toContain('justify-end');
     expect(agentCard?.getAttribute('class')).toContain('justify-start');
+    expect(userMessage?.style.width).toBe('65%');
+    expect(userMessage?.style.maxWidth).toBe('65%');
+    expect(agentMessage?.style.width).toBe('65%');
+    expect(agentMessage?.style.maxWidth).toBe('65%');
     expect(userBubble).not.toBeNull();
     expect(agentContent).not.toBeNull();
     expect(userBubble!.style.backgroundColor).toBe('rgb(239, 248, 255)');
@@ -672,7 +728,7 @@ describe('ChatArea mention fan-out', () => {
     expect(agentContent!.style.backgroundColor).toBe('');
     expect(agentContent!.style.borderTopColor).toBe('');
     expect(agentContent!.getAttribute('class')).not.toContain('rounded-2xl');
-    expect(screen.getByText('builder')).toBeTruthy();
+    expect(screen.getByText('Orchestrator')).toBeTruthy();
   });
 
   it('uses the default claude agent when no mention is present', async () => {

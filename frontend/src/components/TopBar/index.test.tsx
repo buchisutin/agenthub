@@ -147,6 +147,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -168,7 +169,7 @@ describe('TopBar', () => {
     }
   });
 
-  it('routes top controls to project-scoped tabs and shows the file count', () => {
+  it('routes top controls to project-scoped tabs without showing the file count', () => {
     const state: AppState = {
       conversations: [],
       selectedConvId: null,
@@ -178,6 +179,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -191,7 +193,8 @@ describe('TopBar', () => {
       </AppContext.Provider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '代码改动 3' }));
+    expect(screen.queryByRole('button', { name: '代码改动 3' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '代码改动' }));
     fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
     fireEvent.click(screen.getByRole('button', { name: '部署' }));
 
@@ -227,6 +230,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: { 'conv-1': ['run-1', 'run-2'] },
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -268,6 +272,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -320,6 +325,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -361,6 +367,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -417,6 +424,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -462,6 +470,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -509,6 +518,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,

@@ -31,7 +31,7 @@ export type TaskType =
   | 'deploy'
   | 'general';
 export type MessageSenderType = 'user' | 'agent' | 'system' | 'orchestrator';
-export type MessageType = 'text' | 'command' | 'plan' | 'system' | 'conflict_review';
+export type MessageType = 'text' | 'command' | 'plan' | 'system' | 'conflict_review' | 'queued_prompt';
 
 export type RuntimeEventType =
   | 'text_delta'
@@ -331,8 +331,11 @@ export interface TaskPlan {
 }
 
 export interface OrchestrateResponse {
-  plan: TaskPlan;
+  plan: TaskPlan | null;
   runs: RunSummary[];
+  queued?: boolean;
+  pendingClarification?: boolean;
+  preview?: boolean;
 }
 
 export interface ResumePlanResponse {
@@ -410,6 +413,7 @@ export interface PlanCardModel {
     outputSummary?: string | null;
   }>;
   createdAt: string;
+  preview?: boolean;
 }
 
 export interface OrchestratorPlanningState {

@@ -55,6 +55,46 @@ export function createOrchestratorRouter(
       return;
     }
 
+    // @slug direct routing — bypasses orchestrateConversation intentionally, not subject to message queue
+    const atMatch = /^@([a-z0-9-]+)\s+([\s\S]+)/i.exec(prompt);
+    if (atMatch) {
+      try {
+        const directResult = await orchestratorService.dispatchDirectRun(
+          req.params.conversationId,
+          atMatch[1],
+          atMatch[2].trim(),
+          typeof req.body?.sourceMessageId === "string" ? req.body.sourceMessageId : undefined,
+        );
+        if (directResult) {
+          res.json(directResult);
+          return;
+        }
+        // Agent not found for slug — fall through to normal orchestrate
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to dispatch direct run";
+        const status = /conversation not found/i.test(message) ? 404 : 500;
+        res.status(status).json({ detail: message });
+        return;
+      }
+    }
+
+    // Suspended planner session check — user is replying to a clarification question
+    if (orchestratorService.hasSuspendedPlannerSession(req.params.conversationId)) {
+      try {
+        const result = await orchestratorService.resumePlannerSession(
+          req.params.conversationId,
+          prompt,
+          typeof req.body?.sourceMessageId === "string" ? req.body.sourceMessageId : undefined,
+        );
+        res.json(result);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to resume planner session";
+        res.status(500).json({ detail: message });
+        return;
+      }
+    }
+
     try {
       const result = await orchestratorService.orchestrateConversation(
         req.params.conversationId,
@@ -62,6 +102,7 @@ export function createOrchestratorRouter(
         typeof req.body?.sourceMessageId === "string"
           ? req.body.sourceMessageId
           : undefined,
+        { preview: req.body?.preview === true },
       );
       res.json(result);
     } catch (error) {
@@ -101,6 +142,17 @@ export function createOrchestratorRouter(
         : /running/i.test(message)
           ? 409
           : 400;
+      res.status(status).json({ detail: message });
+    }
+  });
+
+  router.post("/plans/:planMessageId/execute", async (req, res) => {
+    try {
+      const result = await orchestratorService.executePlan(req.params.planMessageId);
+      res.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to execute plan";
+      const status = /not found/i.test(message) ? 404 : 400;
       res.status(status).json({ detail: message });
     }
   });

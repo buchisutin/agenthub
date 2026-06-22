@@ -56,6 +56,19 @@ describe('AppContext reducer', () => {
     expect(next.activeRunIdsByConversation['conv-1']).toEqual(['run-a', 'run-b']);
   });
 
+  it('increments only the changed workspace revision', () => {
+    const state = reducer(initialState, {
+      type: 'BUMP_WORKSPACE_REVISION',
+      payload: { workspaceId: 'workspace-1' },
+    });
+    const next = reducer(state, {
+      type: 'BUMP_WORKSPACE_REVISION',
+      payload: { workspaceId: 'workspace-1' },
+    });
+
+    expect(next.workspaceRevisionById).toEqual({ 'workspace-1': 2 });
+  });
+
   it('routes text and tool events only to the matching run card', () => {
     let state = withTimeline();
 

@@ -6,7 +6,7 @@ import { ConnectionBanner, Toast } from './components/Toast';
 
 function AppLayout() {
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('expanded');
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleCollapse = useCallback(() => setSidebarMode('collapsed'), []);
   const handleExpand = useCallback(() => setSidebarMode('expanded'), []);
@@ -32,7 +32,7 @@ function AppLayout() {
   }, []);
 
   return (
-    <div className="h-full flex gap-3 overflow-hidden bg-[var(--app-bg)] p-3 text-[var(--app-text)]">
+    <div className="h-full flex gap-2 overflow-hidden bg-[var(--app-bg)] p-3 text-[var(--app-text)]">
       {sidebarMode === 'collapsed' && (
         <div
           className="fixed left-0 top-0 h-full w-[5px] z-40 cursor-pointer"
@@ -56,8 +56,8 @@ function AppLayout() {
       />
 
       <div
-        className="flex-1 flex min-h-0 flex-col min-w-0 overflow-hidden rounded-xl"
-        style={{ backgroundColor: 'var(--panel-bg)', border: '0.5px solid var(--app-border)' }}
+        className="flex-1 flex min-h-0 flex-col min-w-0 overflow-hidden rounded-xl bg-white"
+        style={{ border: '0.5px solid var(--app-border)' }}
       >
         <ConnectionBanner />
         <ChatArea />

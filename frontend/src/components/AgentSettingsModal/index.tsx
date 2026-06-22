@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../services/api';
 import type { Agent, RuntimeAdapterCheck, RuntimeAdapterInfo } from '../../types';
 import { AgentForm } from './AgentForm';
@@ -238,8 +239,9 @@ export function AgentSettingsModal({ onClose, onAgentsChanged }: AgentSettingsMo
     }
   }
 
-  return (
+  return createPortal(
     <div
+      data-testid="agent-settings-modal"
       className="fixed inset-0 z-50 flex justify-end overflow-hidden"
       style={{ backdropFilter: 'blur(2px)' }}
     >
@@ -278,6 +280,7 @@ export function AgentSettingsModal({ onClose, onAgentsChanged }: AgentSettingsMo
           onDelete={() => void handleDelete()}
         />
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

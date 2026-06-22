@@ -1,7 +1,7 @@
 import { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
 import { RunManager } from "../runtime/manager/run-manager.js";
-import { OrchestratorEvent, RuntimeEvent } from "../shared/types.js";
+import { OrchestratorEvent, RuntimeEvent, WorkspaceChangedEvent } from "../shared/types.js";
 
 function conversationRoom(conversationId: string): string {
   return `conversation:${conversationId}`;
@@ -60,6 +60,10 @@ export class RealtimeServer {
   }
 
   emitConversationEvent(event: OrchestratorEvent): void {
+    this.io.to(conversationRoom(event.conversationId)).emit(event.type, event);
+  }
+
+  emitWorkspaceChanged(event: WorkspaceChangedEvent): void {
     this.io.to(conversationRoom(event.conversationId)).emit(event.type, event);
   }
 

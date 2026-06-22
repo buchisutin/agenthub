@@ -31,5 +31,28 @@ export function createPreviewRouter(previewService: PreviewService): Router {
     }
   });
 
+  router.post("/workspaces/:workspaceId/preview/start", async (req, res) => {
+    try {
+      res.json(await previewService.startPreviewForWorkspace(req.params.workspaceId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start preview";
+      const status = /not found/i.test(message)
+        ? 404
+        : /workspace|previewed|ports available|invalid/i.test(message)
+          ? 400
+          : 500;
+      res.status(status).json({ detail: message });
+    }
+  });
+
+  router.post("/workspaces/:workspaceId/preview/stop", async (req, res) => {
+    try {
+      res.json(await previewService.stopPreviewForWorkspace(req.params.workspaceId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to stop preview";
+      res.status(500).json({ detail: message });
+    }
+  });
+
   return router;
 }

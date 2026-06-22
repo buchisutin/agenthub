@@ -14,7 +14,24 @@ interface WorkspaceSetupProps {
 }
 
 const DEBOUNCE_MS = 800;
-const PLACEHOLDER = '粘贴项目绝对路径，如 /Users/me/myproject';
+const RECENT_KEY = 'agenthub.recentWorkspaces';
+const MAX_RECENT = 5;
+
+function loadRecentWorkspaces(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentWorkspace(path: string) {
+  try {
+    const existing = loadRecentWorkspaces().filter((p) => p !== path);
+    localStorage.setItem(RECENT_KEY, JSON.stringify([path, ...existing].slice(0, MAX_RECENT)));
+  } catch { /* non-critical */ }
+}
 
 export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const { state, dispatch } = useApp();
@@ -27,8 +44,14 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const [error, setError] = useState<string | null>(null);
   const [runtimeAvailable, setRuntimeAvailable] = useState<boolean | null>(null);
   const [showAgentSettings, setShowAgentSettings] = useState(false);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => loadRecentWorkspaces());
+  const [picking, setPicking] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enabledAgents = useMemo(() => state.agents.filter((agent) => agent.enabled), [state.agents]);
+  const defaultAgent = enabledAgents.find((agent) => agent.is_default) ?? enabledAgents[0] ?? null;
+  const selectedSingleAgentId = enabledAgents.some((agent) => agent.id === singleAgentId)
+    ? singleAgentId
+    : defaultAgent?.id ?? '';
 
   // Check runtime once on mount (for the badge).
   useEffect(() => {
@@ -36,12 +59,6 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
       .then((c) => setRuntimeAvailable(c.available))
       .catch(() => setRuntimeAvailable(false));
   }, []);
-
-  useEffect(() => {
-    if (enabledAgents.some((agent) => agent.id === singleAgentId)) return;
-    const defaultAgent = enabledAgents.find((agent) => agent.is_default) ?? enabledAgents[0];
-    if (defaultAgent) setSingleAgentId(defaultAgent.id);
-  }, [enabledAgents, singleAgentId]);
 
   const handleAgentsChanged = useCallback((agents: Agent[]) => {
     dispatch({ type: 'SET_AGENTS', payload: agents });
@@ -79,7 +96,7 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
         rootPath: rootPath.trim(),
         type: conversationType,
       });
-      if (conversationType === 'single' && singleAgentId) writeSingleAgentId(result.conversation.id, singleAgentId);
+      if (conversationType === 'single' && selectedSingleAgentId) writeSingleAgentId(result.conversation.id, selectedSingleAgentId);
       dispatch({ type: 'ADD_CONVERSATION', payload: result.conversation });
       dispatch({ type: 'SET_WORKSPACE', payload: { convId: result.conversation.id, workspace: result.workspace } });
       dispatch({ type: 'SELECT_CONVERSATION', payload: result.conversation.id });
@@ -88,6 +105,8 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
         const tl = await loadConversationRuntime(result.conversation.id, dispatch);
         for (const item of tl.items) socketService.subscribeRun(item.runId);
       } catch { /* non-critical */ }
+      saveRecentWorkspace(rootPath.trim());
+      setRecentWorkspaces(loadRecentWorkspaces());
       onCreated?.(result.conversation.id);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '创建协作会话失败');
@@ -96,10 +115,14 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key !== 'Enter' || !canCreate || creating) return;
-    e.preventDefault();
-    void handleCreate();
+  async function handlePickDirectory() {
+    setPicking(true);
+    try {
+      const res = await fetch('http://localhost:8000/system/pick-directory', { method: 'POST' });
+      const data = await res.json() as { path: string | null };
+      if (data.path) handleChange(data.path);
+    } catch { /* user cancelled or server error — do nothing */ }
+    finally { setPicking(false); }
   }
 
   const valid = Boolean(validation && validation.errors.length === 0);
@@ -108,7 +131,17 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   const badges = validation ? buildBadges(validation, runtimeAvailable) : [];
 
   const card = (
-    <div className="agenthub-card w-full max-w-[460px] p-8">
+    <div
+      data-testid="workspace-setup-card"
+      className="w-full max-w-[460px] rounded-2xl px-8 pt-8 pb-6"
+      style={{
+        backgroundColor: 'rgba(255, 252, 250, 0.66)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)',
+        border: '1px solid rgba(103, 115, 101, 0.13)',
+        boxShadow: '0 12px 32px rgba(62, 78, 64, 0.07)',
+      }}
+    >
       <div className="space-y-5">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-xl font-semibold tracking-[-0.02em]" style={{ color: 'var(--app-text)' }}>
@@ -117,90 +150,144 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
           <button
             type="button"
             onClick={() => setShowAgentSettings(true)}
-            className="rounded-full px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-90"
-            style={{ backgroundColor: '#EFF6FF', color: '#2563EB' }}
+            className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/75"
+            style={{
+              backgroundColor: 'rgba(255, 255, 255, 0.52)',
+              color: '#244A2D',
+              border: '1px solid rgba(103, 115, 101, 0.2)',
+              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.03)',
+            }}
           >
             配置 Agents
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <ModeButton
-            active={conversationType === 'single'}
-            title="单聊"
-            description="选一个 Agent，一对一对话"
-            onClick={() => setConversationType('single')}
-          />
-          <ModeButton
-            active={conversationType === 'group'}
-            title="群聊"
-            description="@成员或 @orchestrator 协作"
+        {/* Horizontal mode + agent picker */}
+        <div
+          className="flex gap-2 overflow-x-auto snap-x snap-mandatory -mx-1 px-1"
+          style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
+          data-testid="mode-agent-picker"
+        >
+          {/* Group card — always first */}
+          <button
+            type="button"
             onClick={() => setConversationType('group')}
-          />
+            className="flex-shrink-0 snap-start rounded-xl px-4 py-3.5 text-left transition-all w-[148px]"
+            style={{
+              backgroundColor: conversationType === 'group' ? '#EFF8FF' : 'var(--card-bg)',
+              border: conversationType === 'group' ? '1.5px solid #93C5FD' : '0.5px solid var(--app-border)',
+              boxShadow: conversationType === 'group' ? '0 0 0 3px rgba(147,197,253,0.15)' : 'none',
+            }}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <GroupIcon />
+              <span className="text-sm font-semibold" style={{ color: 'var(--app-text)' }}>群聊</span>
+            </div>
+            <div className="text-[11px] leading-relaxed" style={{ color: 'var(--app-text-secondary)' }}>
+              多 Agent 协作完成任务
+            </div>
+            <div className="mt-2 text-[11px] font-medium" style={{ color: conversationType === 'group' ? '#1A6BCC' : 'var(--app-text-secondary)' }}>
+              {enabledAgents.length} 个可用
+            </div>
+          </button>
+
+          {/* Divider */}
+          <div className="flex-shrink-0 flex items-center">
+            <div className="h-10 w-px" style={{ backgroundColor: 'var(--app-border)' }} />
+          </div>
+
+          {/* Individual agent cards */}
+          {enabledAgents.map((agent) => {
+            const isActive = conversationType === 'single' && selectedSingleAgentId === agent.id;
+            return (
+              <button
+                key={agent.id}
+                type="button"
+                onClick={() => { setConversationType('single'); setSingleAgentId(agent.id); }}
+                className="flex-shrink-0 snap-start rounded-xl px-4 py-3.5 text-left transition-all w-[148px]"
+                style={{
+                  backgroundColor: isActive ? '#EFF8FF' : 'var(--card-bg)',
+                  border: isActive ? '1.5px solid #93C5FD' : '0.5px solid var(--app-border)',
+                  boxShadow: isActive ? '0 0 0 3px rgba(147,197,253,0.15)' : 'none',
+                }}
+              >
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <AgentIcon />
+                  <span className="text-sm font-semibold truncate" style={{ color: 'var(--app-text)' }}>{agent.name}</span>
+                </div>
+                <div className="text-[11px] leading-relaxed line-clamp-3" style={{ color: 'var(--app-text-secondary)' }}>
+                  {describeAgent(agent)}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
-        {conversationType === 'single' && (
-          <div className="space-y-2">
-            <div className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
-              单聊对象
-            </div>
-            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1" data-testid="agent-picker-list">
-              {enabledAgents.map((agent) => (
-                <AgentChoiceCard
-                  key={agent.id}
-                  active={agent.id === singleAgentId}
-                  name={agent.name}
-                  description={describeAgent(agent)}
-                  onClick={() => setSingleAgentId(agent.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {conversationType === 'group' && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-medium" style={{ color: 'var(--app-text-secondary)' }}>
-                群聊成员
-              </div>
-              <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>
-                {enabledAgents.length} 个可用
-              </span>
-            </div>
-            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1" data-testid="agent-picker-list">
-              {enabledAgents.map((agent) => (
-                <AgentChoiceCard
-                  key={agent.id}
-                  active={agent.is_default}
-                  name={agent.name}
-                  description={describeAgent(agent)}
-                  onClick={() => setShowAgentSettings(true)}
-                  actionLabel={agent.is_default ? '默认' : '配置'}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
         <div className="space-y-3">
-          <div className="relative">
-            <input
-              value={rootPath}
-              onChange={(e) => handleChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={PLACEHOLDER}
-              className="w-full rounded-lg px-4 py-3 text-sm font-mono outline-none"
-              style={getInputStyle(valid, invalid)}
-              autoFocus={!compact}
-              spellCheck={false}
-            />
-            {validating && (
-              <span className="absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 animate-spin"
-                style={{ borderColor: 'var(--color-accent)', borderTopColor: 'transparent' }}
-              />
-            )}
-          </div>
+          {/* Drop zone / picker button */}
+          {!rootPath ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => void handlePickDirectory()}
+                disabled={picking}
+                className="w-full rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors hover:border-blue-400 hover:bg-blue-50/40 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                style={{ borderColor: 'var(--app-border)', backgroundColor: 'var(--card-subtle)' }}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <FolderIcon />
+                  <span className="text-sm font-medium" style={{ color: 'var(--app-text)' }}>{picking ? '选择中...' : '选择项目目录'}</span>
+                  <span className="text-xs" style={{ color: 'var(--app-text-secondary)' }}>点击浏览，或拖入文件夹</span>
+                </div>
+              </button>
+
+              {recentWorkspaces.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px]" style={{ color: 'var(--app-text-secondary)' }}>最近使用</div>
+                  <div className="flex flex-col gap-1">
+                    {recentWorkspaces.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => handleChange(p)}
+                        className="w-full rounded-lg px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-white/70"
+                        style={{ backgroundColor: 'var(--card-subtle)', color: 'var(--app-text)', border: '0.5px solid var(--app-border)' }}
+                      >
+                        <span className="truncate block">{p}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          ) : (
+            /* Path selected — show result row */
+            <div className={`relative flex items-center gap-3 rounded-lg px-4 py-3 ${
+              valid ? 'border border-green-600 bg-green-50/30' :
+              invalid ? 'border border-red-400 bg-red-50/30' :
+              'border border-gray-200 bg-gray-50/50'
+            }`}>
+              <FolderIcon size={16} />
+              <span className="flex-1 truncate font-mono text-sm" style={{ color: 'var(--app-text)' }}>
+                {rootPath}
+              </span>
+              {validating && (
+                <span className="h-4 w-4 flex-shrink-0 rounded-full border-2 animate-spin"
+                  style={{ borderColor: 'var(--color-accent)', borderTopColor: 'transparent' }}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => handleChange('')}
+                className="flex-shrink-0 rounded-full p-0.5 text-xs hover:bg-gray-200 transition-colors"
+                style={{ color: 'var(--app-text-secondary)' }}
+                aria-label="清除"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {valid && (
             <div className="flex flex-wrap items-center gap-2">
@@ -227,22 +314,38 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
           type="button"
           disabled={!canCreate || creating}
           onClick={() => void handleCreate()}
-          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-colors"
+          className="relative isolate inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full p-[2px] text-sm font-semibold transition-all hover:-translate-y-px hover:brightness-[1.015] active:translate-y-0 disabled:transform-none disabled:brightness-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9CAA98] focus-visible:ring-offset-2"
           aria-label={creating ? '创建中...' : '创建协作会话'}
           style={{
-            backgroundColor: canCreate ? '#1A6BCC' : 'var(--card-strong)',
-            color: canCreate ? '#FFFFFF' : 'var(--app-text-secondary)',
-            border: canCreate ? '0.5px solid #1A6BCC' : '0.5px solid var(--app-border)',
-            boxShadow: canCreate ? '0 4px 12px rgba(26, 107, 204, 0.16)' : 'none',
+            background: canCreate
+              ? 'linear-gradient(#98a596 0%, #dce9d8 100%)'
+              : 'linear-gradient(#b6c0b4 0%, #e1eae0 100%)',
+            color: canCreate ? '#31543A' : '#849084',
+            boxShadow: canCreate
+              ? '0 8px 18px rgba(112, 137, 108, 0.12), 0 2px 5px rgba(0, 0, 0, 0.03)'
+              : '0 4px 12px rgba(112, 137, 108, 0.05)',
             opacity: creating ? 0.8 : 1,
             cursor: !canCreate || creating ? 'not-allowed' : 'pointer',
           }}
         >
           <span
+            data-testid="create-button-surface"
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-[2px] rounded-full border border-white/50"
             style={{
-              color: canCreate ? '#FFFFFF' : 'var(--app-text-secondary)',
-              fontWeight: 600,
+              background: canCreate
+                ? 'linear-gradient(#f7faf5 0%, #ced8ca 55%, #edf5e9 100%)'
+                : 'linear-gradient(#f3f6f1 0%, #dce4d8 55%, #eff4ed 100%)',
+              boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.56), inset 0 -1px 0 rgba(224, 237, 220, 0.52)',
+            }}
+          />
+          <span
+            className="relative z-10"
+            style={{
+              color: canCreate ? '#31543A' : '#849084',
+              fontWeight: 650,
               lineHeight: 1,
+              textShadow: 'none',
             }}
           >
             {creating ? '创建中...' : '创建协作会话 →'}
@@ -261,7 +364,11 @@ export function WorkspaceSetup({ compact, onCreated }: WorkspaceSetupProps) {
   if (compact) return card;
 
   return (
-    <div className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-12" style={{ backgroundColor: 'var(--app-bg)' }}>
+    <div
+      data-testid="workspace-setup-surface"
+      className="flex flex-1 items-center justify-center overflow-y-auto px-6 py-12"
+      style={{ background: 'linear-gradient(#e8eee7 0%, #f7f7f1 55%, #fff8f7 100%)' }}
+    >
       {card}
     </div>
   );
@@ -327,31 +434,20 @@ function describeAgent(agent: { name: string; slug: string; instructions: string
   return '适合一对一处理具体开发任务。';
 }
 
-function ModeButton({
-  active,
-  title,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  title: string;
-  description: string;
-  onClick: () => void;
-}) {
+function GroupIcon() {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="rounded-lg px-3 py-3 text-left transition-colors"
-      style={{
-        backgroundColor: active ? '#EFF8FF' : 'var(--card-bg)',
-        border: active ? '1px solid #BFDBFE' : '0.5px solid var(--app-border)',
-        color: 'var(--app-text)',
-      }}
-    >
-      <div className="text-sm font-semibold">{title}</div>
-      <div className="mt-1 text-xs" style={{ color: 'var(--app-text-secondary)' }}>{description}</div>
-    </button>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--app-text-secondary)', flexShrink: 0 }}>
+      <circle cx="9" cy="7" r="3" /><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M21 21v-2a4 4 0 0 0-3-3.87" />
+    </svg>
+  );
+}
+
+function AgentIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--app-text-secondary)', flexShrink: 0 }}>
+      <circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+    </svg>
   );
 }
 
@@ -379,21 +475,16 @@ function buildBadges(validation: WorkspaceValidationResult, runtimeAvailable: bo
   return badges;
 }
 
-function getInputStyle(valid: boolean, invalid: boolean) {
-  const borderColor = valid
-    ? '#1A7F4B'
-    : invalid
-      ? 'var(--status-danger)'
-      : 'var(--app-border)';
-  return {
-    backgroundColor: 'var(--card-bg)',
-    color: 'var(--app-text)',
-    border: `1px solid ${borderColor}`,
-    borderRadius: '8px',
-  };
-}
-
 function pathBasename(p: string): string {
   const parts = p.replace(/\/+$/, '').split('/');
   return parts[parts.length - 1] || 'project';
+}
+
+
+function FolderIcon({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--app-text-secondary)' }}>
+      <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+    </svg>
+  );
 }

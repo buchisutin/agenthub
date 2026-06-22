@@ -40,7 +40,7 @@ export type RunStatus =
   | "interrupted";
 export type RunTriggerType = "chat" | "task" | "autopilot" | "workflow";
 export type MessageSenderType = "user" | "agent" | "system" | "orchestrator";
-export type MessageType = "text" | "command" | "plan" | "system" | "conflict_review";
+export type MessageType = "text" | "command" | "plan" | "system" | "conflict_review" | "queued_prompt";
 export type TaskType =
   | "frontend"
   | "backend"
@@ -62,6 +62,7 @@ export type RuntimeEventType =
   | "command_output"
   | "file_changed"
   | "approval_required"
+  | "approval_status_changed"
   | "run_status_changed"
   | "run_completed"
   | "run_failed"
@@ -310,6 +311,31 @@ export interface FileChange {
   source: "snapshot" | "read_tool" | "tool_event" | "filesystem";
 }
 
+export interface ProjectFileChange extends FileChange {
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface WorkspaceDiffResponse {
+  workspaceId: string;
+  baseRef: "HEAD";
+  files: ProjectFileChange[];
+  summary: {
+    files: number;
+    additions: number;
+    deletions: number;
+  };
+}
+
+export interface WorkspaceChangedEvent {
+  type: "workspace_changed";
+  eventId?: string;
+  conversationId: string;
+  workspaceId: string;
+  reason: "merge_completed";
+}
+
 export interface PreviewState {
   runId: string;
   port: number;
@@ -348,6 +374,16 @@ export interface DeployRecord {
   errorMessage: string | null;
 }
 
+export interface WorkspaceDeployScriptsResponse {
+  workspaceId: string;
+  scripts: string[];
+  defaultScript: string | null;
+}
+
+export type WorkspaceDeployRecord = Omit<DeployRecord, "runId"> & {
+  workspaceId: string;
+};
+
 export interface TaskPlanItem {
   index: number;
   plannerTaskId?: string;
@@ -384,8 +420,11 @@ export interface OrchestrateRequest {
 }
 
 export interface OrchestrateResponse {
-  plan: TaskPlan;
+  plan: TaskPlan | null;
   runs: RunSummary[];
+  queued?: boolean;
+  pendingClarification?: boolean;
+  preview?: boolean;
 }
 
 export type ConversationTimelineItem =
@@ -493,7 +532,14 @@ export interface FileChangedEvent extends RuntimeBaseEvent {
 export interface ApprovalRequiredEvent extends RuntimeBaseEvent {
   type: "approval_required";
   reason: string;
+  approvalId?: string;
   rawEvent?: Record<string, unknown>;
+}
+
+export interface ApprovalStatusChangedEvent extends RuntimeBaseEvent {
+  type: "approval_status_changed";
+  approvalId: string;
+  status: ApprovalStatus;
 }
 
 export interface RunStatusChangedEvent extends RuntimeBaseEvent {
@@ -551,6 +597,7 @@ export type RuntimeEvent =
   | CommandOutputEvent
   | FileChangedEvent
   | ApprovalRequiredEvent
+  | ApprovalStatusChangedEvent
   | RunStatusChangedEvent
   | RunCompletedEvent
   | RunFailedEvent
@@ -752,7 +799,8 @@ export type ApprovalActionType =
   | "apply_and_commit"
   | "resolve_conflicts"
   | "cleanup_workspace"
-  | "cleanup_conversation_workspaces";
+  | "cleanup_conversation_workspaces"
+  | "tool_use";
 
 export type ApprovalStatus =
   | "pending"

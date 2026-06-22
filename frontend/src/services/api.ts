@@ -27,6 +27,9 @@ import type {
   TaskDetail,
   TaskAssignment,
   Workspace,
+  WorkspaceDeployRecord,
+  WorkspaceDeployScriptsResponse,
+  WorkspaceDiffResponse,
   WorkspaceExecutionStatus,
   WorkspaceValidationResult,
 } from '../types';
@@ -373,6 +376,47 @@ export const api = {
     return handleResponse(res);
   },
 
+  async getWorkspaceFileChanges(workspaceId: string): Promise<WorkspaceDiffResponse> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/file-changes`);
+    return handleResponse(res);
+  },
+
+  async startWorkspacePreview(workspaceId: string): Promise<PreviewStartResponse> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/preview/start`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async stopWorkspacePreview(workspaceId: string): Promise<{ ok: true }> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/preview/stop`, {
+      method: 'POST',
+    });
+    return handleResponse(res);
+  },
+
+  async getWorkspaceDeployScripts(workspaceId: string): Promise<WorkspaceDeployScriptsResponse> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/deploy/scripts`);
+    return handleResponse(res);
+  },
+
+  async startWorkspaceDeploy(
+    workspaceId: string,
+    script?: string,
+  ): Promise<WorkspaceDeployRecord> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/deploy/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script }),
+    });
+    return handleResponse(res);
+  },
+
+  async getWorkspaceDeploy(workspaceId: string): Promise<WorkspaceDeployRecord | null> {
+    const res = await fetch(`${BASE_URL}/workspaces/${workspaceId}/deploy`);
+    return handleResponse(res);
+  },
+
   async startRunPreview(runId: string): Promise<PreviewStartResponse> {
     const res = await fetch(`${BASE_URL}/runs/${runId}/preview/start`, {
       method: 'POST',
@@ -415,11 +459,19 @@ export const api = {
     conversationId: string,
     prompt: string,
     sourceMessageId?: string,
+    preview?: boolean,
   ): Promise<OrchestrateResponse> {
     const res = await fetch(`${BASE_URL}/conversations/${conversationId}/orchestrate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, sourceMessageId }),
+      body: JSON.stringify({ prompt, sourceMessageId, preview }),
+    });
+    return handleResponse(res);
+  },
+
+  async executePlan(planMessageId: string): Promise<OrchestrateResponse> {
+    const res = await fetch(`${BASE_URL}/plans/${planMessageId}/execute`, {
+      method: 'POST',
     });
     return handleResponse(res);
   },

@@ -110,6 +110,16 @@ export class WorkspacesService {
       }
 
       const gitRoot = gitState.gitRoot ?? dirPath;
+
+      // Ensure .agenthub/ is always ignored so worktrees/runs never show as
+      // uncommitted changes and block new write tasks.
+      const gitignorePath = path.join(gitRoot, ".gitignore");
+      const gitignoreEntry = ".agenthub/";
+      const gitignoreContent = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+      if (!gitignoreContent.split(/\r?\n/).some((line) => line.trim() === gitignoreEntry)) {
+        fs.writeFileSync(gitignorePath, gitignoreContent + (gitignoreContent.endsWith("\n") || !gitignoreContent ? "" : "\n") + gitignoreEntry + "\n", "utf8");
+      }
+
       if (gitState.isGitRepo && !this.hasGitBaselineCommit(gitRoot)) {
         execSync("git add -A", {
           cwd: gitRoot,

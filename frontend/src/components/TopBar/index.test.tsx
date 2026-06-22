@@ -137,6 +137,74 @@ describe('TopBar', () => {
     mockRuntimeApis();
   });
 
+  it('uses compact corners and a thin border for project actions', () => {
+    const state: AppState = {
+      conversations: [],
+      selectedConvId: null,
+      agents: [],
+      workspaces: {},
+      messagesByConversation: {},
+      timeline: {},
+      plansByConversation: {},
+      activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
+      connected: true,
+      loadingConvs: false,
+      loadingAgents: false,
+      loadingTimeline: false,
+      error: null,
+    };
+
+    render(
+      <AppContext.Provider value={{ state, dispatch: vi.fn<Dispatch<Action>>() }}>
+        <TopBar onOpenProjectArtifact={vi.fn()} />
+      </AppContext.Provider>,
+    );
+
+    for (const name of ['代码改动', '网页预览', '部署', 'Agents']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.classList.contains('rounded-lg')).toBe(true);
+      expect(button.classList.contains('rounded-full')).toBe(false);
+      expect(button.style.borderWidth).toBe('0.5px');
+    }
+  });
+
+  it('routes top controls to project-scoped tabs without showing the file count', () => {
+    const state: AppState = {
+      conversations: [],
+      selectedConvId: null,
+      agents: [],
+      workspaces: {},
+      messagesByConversation: {},
+      timeline: {},
+      plansByConversation: {},
+      activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
+      connected: true,
+      loadingConvs: false,
+      loadingAgents: false,
+      loadingTimeline: false,
+      error: null,
+    };
+    const onOpenProjectArtifact = vi.fn();
+    render(
+      <AppContext.Provider value={{ state, dispatch: vi.fn<Dispatch<Action>>() }}>
+        <TopBar onOpenProjectArtifact={onOpenProjectArtifact} projectFileCount={3} />
+      </AppContext.Provider>,
+    );
+
+    expect(screen.queryByRole('button', { name: '代码改动 3' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '代码改动' }));
+    fireEvent.click(screen.getByRole('button', { name: '网页预览' }));
+    fireEvent.click(screen.getByRole('button', { name: '部署' }));
+
+    expect(onOpenProjectArtifact.mock.calls).toEqual([
+      ['diff'],
+      ['preview'],
+      ['deploy'],
+    ]);
+  });
+
   it('shows the running run count for the selected conversation', () => {
     const state: AppState = {
       conversations: [
@@ -162,6 +230,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: { 'conv-1': ['run-1', 'run-2'] },
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -203,6 +272,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -255,6 +325,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -296,6 +367,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -352,6 +424,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -397,6 +470,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,
@@ -444,6 +518,7 @@ describe('TopBar', () => {
       timeline: {},
       plansByConversation: {},
       activeRunIdsByConversation: {},
+      pendingClarificationConvIds: [],
       connected: true,
       loadingConvs: false,
       loadingAgents: false,

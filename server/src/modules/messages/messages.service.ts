@@ -553,6 +553,69 @@ export class MessagesService {
     };
   }
 
+  getLastCompletedPlanSummary(conversationId: string): string | null {
+    const stmt = this.database.db.prepare(`
+      SELECT metadata_json
+      FROM messages
+      WHERE conversation_id = ?
+        AND message_type = 'plan'
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+    const rows = stmt.all(conversationId) as Array<{ metadata_json: string | null }>;
+    for (const row of rows) {
+      const metadata = parseMetadata(row.metadata_json);
+      if (
+        metadata?.watchStatus === "completed" &&
+        typeof metadata.summary === "string" &&
+        metadata.summary.trim()
+      ) {
+        return metadata.summary.trim();
+      }
+    }
+    return null;
+  }
+
+  getRecentUserMessages(conversationId: string, limit = 5): string[] {
+    const stmt = this.database.db.prepare(`
+      SELECT content
+      FROM messages
+      WHERE conversation_id = ?
+        AND sender_type = 'user'
+        AND message_type != 'queued_prompt'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(conversationId, limit) as Array<{ content: string }>;
+    return rows.map((row) => String(row.content)).reverse();
+  }
+
+  listQueuedPrompts(conversationId: string): MessageRecord[] {
+    const stmt = this.database.db.prepare(`
+      SELECT *
+      FROM messages
+      WHERE conversation_id = ?
+        AND message_type = 'queued_prompt'
+      ORDER BY created_at ASC
+    `);
+    return (stmt.all(conversationId) as Array<Record<string, unknown>>)
+      .map((row) => this.parseMessage(row))
+      .filter((msg) => msg.metadata_json?.consumed !== true);
+  }
+
+  markQueuedPromptConsumed(messageId: string): void {
+    const current = this.getById(messageId);
+    if (!current) {
+      return;
+    }
+    this.database.db
+      .prepare(`UPDATE messages SET metadata_json = ? WHERE id = ?`)
+      .run(
+        JSON.stringify({ ...(current.metadata_json ?? {}), consumed: true }),
+        messageId,
+      );
+  }
+
   private getAgentName(agentId: string): string {
     const stmt = this.database.db.prepare(`
       SELECT name

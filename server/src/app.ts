@@ -1,4 +1,5 @@
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import cors from "cors";
 import express from "express";
 import { getEnvConfig, type EnvConfig } from "./config/env.js";
@@ -15,6 +16,7 @@ import {
   HiddenPlannerDeps,
   OrchestratorService,
 } from "./modules/orchestrator/orchestrator.service.js";
+import { PlannerAgentService } from "./modules/orchestrator/planner-agent.service.js";
 import { createMessagesRouter } from "./modules/messages/messages.routes.js";
 import { MessagesService } from "./modules/messages/messages.service.js";
 import { createPreviewRouter } from "./modules/preview/preview.routes.js";
@@ -31,6 +33,7 @@ import { createRuntimesRouter } from "./modules/runtimes/runtimes.routes.js";
 import { WorkspacesService } from "./modules/workspaces/workspaces.service.js";
 import { WorkspaceIsolationService } from "./modules/workspaces/workspace-isolation.service.js";
 import { createWorkspacesRouter } from "./modules/workspaces/workspaces.routes.js";
+import { WorkspaceDiffService } from "./modules/workspaces/workspace-diff.service.js";
 import { ApprovalService } from "./modules/approvals/approvals.service.js";
 import { createApprovalsRouter, type ApprovalExecutor } from "./modules/approvals/approvals.routes.js";
 import { ClaudeCliRuntime } from "./runtime/claude/claude-cli-runtime.js";
@@ -57,13 +60,14 @@ export interface AgentHubServerOptions {
   workspaceIsolationService?: WorkspaceIsolationService;
   enableWorkspaceIsolation?: boolean;
   runtimeRegistry?: RuntimeRegistry;
+  slowRequestMs?: number | null;
 }
 
 export function createAgentHubServer(
   overrides: Partial<EnvConfig> = {},
   options: AgentHubServerOptions = {},
 ): AgentHubServer {
-  const SLOW_REQUEST_MS = 200;
+  const slowRequestMs = options.slowRequestMs === undefined ? 200 : options.slowRequestMs;
   const env = getEnvConfig(overrides);
   const database = new DatabaseClient(env.dbPath);
   const tasksService = new TasksService(database);
@@ -79,6 +83,7 @@ export function createAgentHubServer(
   const agentRuntimesService = new AgentRuntimesService(database);
   const agentSessionsService = new AgentSessionsService(database);
   const workspacesService = new WorkspacesService(database);
+  const workspaceDiffService = new WorkspaceDiffService(workspacesService);
   const workspaceIsolationService: WorkspaceIsolationService | undefined =
     options.workspaceIsolationService ??
     (options.enableWorkspaceIsolation === false ? undefined : new WorkspaceIsolationService(database));
@@ -92,12 +97,15 @@ export function createAgentHubServer(
     assignmentsService,
     approvalService,
   );
+  const plannerAgentService = new PlannerAgentService(env, messagesService);
+
   const previewService =
     options.previewService ??
     new PreviewService(runsService, workspacesService, options.previewServiceDeps);
   const deployService =
     options.deployService ??
     new DeployService(runsService, workspacesService, options.deployServiceDeps);
+  let realtimeServer: RealtimeServer;
   const mergeService = new MergeService(database, {
     getRun: (id) => runsService.getById(id),
     getRunWorkspace: (id) => runsService.getRunWorkspace(id),
@@ -106,6 +114,18 @@ export function createAgentHubServer(
       return ws?.root_path ?? null;
     },
     getFileChanges: (id) => runsService.getFileChanges(id),
+    onWorkspaceChanged: (event) => {
+      realtimeServer.emitWorkspaceChanged(event);
+      // Auto-commit merged changes to the main workspace so it stays clean
+      // and subsequent tasks can start without "uncommitted changes" errors.
+      const ws = workspacesService.getById(event.workspaceId);
+      if (ws?.root_path) {
+        try {
+              spawnSync("git", ["add", "-A"], { cwd: ws.root_path });
+          spawnSync("git", ["commit", "-m", "chore: apply agent changes [agenthub]"], { cwd: ws.root_path });
+        } catch { /* ignore git errors */ }
+      }
+    },
   });
 
   if (workspaceIsolationService) {
@@ -126,7 +146,7 @@ export function createAgentHubServer(
     const startedAt = Date.now();
     res.on("finish", () => {
       const durationMs = Date.now() - startedAt;
-      if (durationMs < SLOW_REQUEST_MS) {
+      if (slowRequestMs === null || durationMs < slowRequestMs) {
         return;
       }
       console.log(
@@ -144,6 +164,7 @@ export function createAgentHubServer(
   app.locals.tasksService = tasksService;
   app.locals.assignmentsService = assignmentsService;
   app.locals.workspacesService = workspacesService;
+  app.locals.workspaceDiffService = workspaceDiffService;
   app.locals.approvalService = approvalService;
   app.locals.previewService = previewService;
   app.locals.deployService = deployService;
@@ -164,7 +185,7 @@ export function createAgentHubServer(
     runtimeRegistry,
     emitEvent: (event) => realtimeServer.emitRunEvent(event),
   });
-  const realtimeServer = new RealtimeServer(httpServer, runManager);
+  realtimeServer = new RealtimeServer(httpServer, runManager);
   const orchestratorService =
     options.orchestratorService ??
     new OrchestratorService(
@@ -181,9 +202,13 @@ export function createAgentHubServer(
         emitEvent: (event) => realtimeServer.emitConversationEvent(event),
         approvalService,
         mergeService,
+        plannerAgentService,
       },
     );
   app.locals.orchestratorService = orchestratorService;
+  if (typeof orchestratorService.clearPlannerSessions === "function") {
+    orchestratorService.clearPlannerSessions();
+  }
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -252,9 +277,10 @@ export function createAgentHubServer(
     runsService,
     approvalService,
     database,
+    runManager,
   }));
   app.use("/conversations", createMessagesRouter(conversationsService, messagesService));
-  app.use("/", createWorkspacesRouter(conversationsService, workspacesService));
+  app.use("/", createWorkspacesRouter(conversationsService, workspacesService, workspaceDiffService));
   app.use(
     "/",
     createRunsRouter(
@@ -270,7 +296,15 @@ export function createAgentHubServer(
       mergeService,
     ),
   );
-  app.use("/", createApprovalsRouter(conversationsService, approvalService, approvalExecutor));
+  app.use(
+    "/",
+    createApprovalsRouter(
+      conversationsService,
+      approvalService,
+      approvalExecutor,
+      (event) => realtimeServer.emitRunEvent(event),
+    ),
+  );
   app.use("/", createOrchestratorRouter(conversationsService, workspacesService, orchestratorService));
   app.use(
     "/",

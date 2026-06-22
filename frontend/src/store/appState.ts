@@ -24,7 +24,9 @@ export interface AppState {
   timeline: Record<string, ChatTimelineItem[]>;
   plansByConversation: Record<string, PlanCardModel[]>;
   planningByConversation?: Record<string, OrchestratorPlanningState | null>;
+  pendingClarificationConvIds: string[];
   activeRunIdsByConversation: Record<string, string[]>;
+  workspaceRevisionById?: Record<string, number>;
   connected: boolean;
   loadingConvs: boolean;
   loadingAgents: boolean;
@@ -53,9 +55,12 @@ export type Action =
   | { type: 'ADD_MESSAGE'; payload: { convId: string; message: Message } }
   | { type: 'SET_TIMELINE'; payload: { convId: string; items: ChatTimelineItem[] } }
   | { type: 'ADD_PLAN_CARD'; payload: { convId: string; plan: PlanCardModel } }
+  | { type: 'UPDATE_PLAN_PREVIEW_EXECUTED'; payload: { convId: string; planId: string } }
   | { type: 'START_ORCHESTRATOR_PLANNING'; payload: { convId: string; prompt: string } }
   | { type: 'APPEND_ORCHESTRATOR_PLANNING_TEXT'; payload: { convId: string; delta: string } }
   | { type: 'CLEAR_ORCHESTRATOR_PLANNING'; payload: { convId: string } }
+  | { type: 'SET_PENDING_CLARIFICATION'; payload: { convId: string } }
+  | { type: 'CLEAR_PENDING_CLARIFICATION'; payload: { convId: string } }
   | { type: 'UPDATE_PLAN_ITEM_STATUS'; payload: { convId: string; runId: string; status: ToolStatusLike } }
   | {
       type: 'UPDATE_PLAN_ITEM_TASK';
@@ -71,6 +76,7 @@ export type Action =
   | { type: 'SET_ACTIVE_RUNS'; payload: { convId: string; runIds: string[] } }
   | { type: 'ADD_ACTIVE_RUN'; payload: { convId: string; runId: string } }
   | { type: 'REMOVE_ACTIVE_RUN'; payload: { convId: string; runId: string } }
+  | { type: 'BUMP_WORKSPACE_REVISION'; payload: { workspaceId: string } }
   | { type: 'APPLY_TEXT_DELTA'; payload: { convId: string; runId: string; delta: string } }
   | { type: 'APPLY_TOOL_STARTED'; payload: ToolStartedEvent }
   | { type: 'APPLY_TOOL_INPUT_DELTA'; payload: ToolInputDeltaEvent }
@@ -78,7 +84,8 @@ export type Action =
   | { type: 'APPLY_TOOL_RESULT'; payload: ToolResultEvent }
   | { type: 'APPLY_TOOL_ERROR'; payload: ToolErrorEvent }
   | { type: 'APPLY_RUN_STATUS_CHANGED'; payload: RunStatusChangedEvent }
-  | { type: 'APPLY_APPROVAL_REQUIRED'; payload: { convId: string; runId: string; reason: string } }
+  | { type: 'APPLY_APPROVAL_REQUIRED'; payload: { convId: string; runId: string; reason: string; approvalId: string; toolName?: string; toolInput?: Record<string, unknown> } }
+  | { type: 'UPDATE_APPROVAL_STATUS'; payload: { convId: string; runId: string; approvalId: string; status: 'approved' | 'rejected' | 'cancelled' | 'executed' | 'failed' } }
   | { type: 'COMPLETE_RUN'; payload: { convId: string; runId: string; finalText: string; exitCode: number } }
   | { type: 'FAIL_RUN'; payload: { convId: string; runId: string; error: string; status: 'failed' | 'interrupted' } }
   | { type: 'SET_CONNECTED'; payload: boolean }
@@ -97,7 +104,9 @@ export const initialState: AppState = {
   timeline: {},
   plansByConversation: {},
   planningByConversation: {},
+  pendingClarificationConvIds: [],
   activeRunIdsByConversation: {},
+  workspaceRevisionById: {},
   connected: false,
   loadingConvs: false,
   loadingAgents: false,
@@ -204,6 +213,7 @@ export function reducer(state: AppState, action: Action): AppState {
         timeline: Object.fromEntries(Object.entries(state.timeline).filter(([k]) => k !== id)),
         plansByConversation: Object.fromEntries(Object.entries(state.plansByConversation).filter(([k]) => k !== id)),
         planningByConversation: Object.fromEntries(Object.entries(state.planningByConversation ?? {}).filter(([k]) => k !== id)),
+        pendingClarificationConvIds: state.pendingClarificationConvIds.filter((convId) => convId !== id),
         activeRunIdsByConversation: Object.fromEntries(Object.entries(state.activeRunIdsByConversation).filter(([k]) => k !== id)),
       };
     }
@@ -226,6 +236,15 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         workspaces: { ...state.workspaces, [action.payload.convId]: action.payload.workspace },
+      };
+    case 'BUMP_WORKSPACE_REVISION':
+      return {
+        ...state,
+        workspaceRevisionById: {
+          ...(state.workspaceRevisionById ?? {}),
+          [action.payload.workspaceId]:
+            (state.workspaceRevisionById?.[action.payload.workspaceId] ?? 0) + 1,
+        },
       };
     case 'SET_CONVERSATION_CONTENT':
       return {
@@ -291,6 +310,18 @@ export function reducer(state: AppState, action: Action): AppState {
         },
       };
     }
+    case 'UPDATE_PLAN_PREVIEW_EXECUTED': {
+      const current = state.plansByConversation[action.payload.convId] ?? [];
+      return {
+        ...state,
+        plansByConversation: {
+          ...state.plansByConversation,
+          [action.payload.convId]: current.map((plan) =>
+            plan.id === action.payload.planId ? { ...plan, preview: undefined } : plan,
+          ),
+        },
+      };
+    }
     case 'START_ORCHESTRATOR_PLANNING':
       return {
         ...state,
@@ -338,6 +369,20 @@ export function reducer(state: AppState, action: Action): AppState {
           ...(state.planningByConversation ?? {}),
           [action.payload.convId]: null,
         },
+      };
+    case 'SET_PENDING_CLARIFICATION':
+      return {
+        ...state,
+        pendingClarificationConvIds: state.pendingClarificationConvIds.includes(action.payload.convId)
+          ? state.pendingClarificationConvIds
+          : [...state.pendingClarificationConvIds, action.payload.convId],
+      };
+    case 'CLEAR_PENDING_CLARIFICATION':
+      return {
+        ...state,
+        pendingClarificationConvIds: state.pendingClarificationConvIds.filter(
+          (id) => id !== action.payload.convId,
+        ),
       };
     case 'UPDATE_PLAN_ITEM_STATUS':
       return {
@@ -526,8 +571,30 @@ export function reducer(state: AppState, action: Action): AppState {
                 agentId: item.agentId,
                 taskId: item.taskId,
                 reason: action.payload.reason,
+                approvalId: action.payload.approvalId,
+                rawEvent: action.payload.toolInput
+                  ? { tool_name: action.payload.toolName, tool_input: action.payload.toolInput }
+                  : undefined,
               }),
           ),
+        },
+      };
+    case 'UPDATE_APPROVAL_STATUS':
+      return {
+        ...state,
+        timeline: {
+          ...state.timeline,
+          [action.payload.convId]: (state.timeline[action.payload.convId] ?? []).map((item) => {
+            if (item.runId !== action.payload.runId) return item;
+            return {
+              ...item,
+              blocks: item.blocks.map((block) =>
+                block.kind === 'approval_request' && block.approvalId === action.payload.approvalId
+                  ? { ...block, status: action.payload.status }
+                  : block,
+              ),
+            };
+          }),
         },
       };
     case 'COMPLETE_RUN':

@@ -53,6 +53,7 @@ export async function createTestHarness(
     },
     {
       enableWorkspaceIsolation: false,
+      slowRequestMs: null,
       ...serverOptions,
     },
   );

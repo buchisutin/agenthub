@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -75,6 +75,35 @@ function createMergeHarness() {
 }
 
 describe("MergeService", () => {
+  it("notifies when a merge changes the bound workspace", () => {
+    const harness = createMergeHarness();
+    const filePath = "src/app.ts";
+    fs.mkdirSync(path.join(harness.mainRoot, "src"), { recursive: true });
+    fs.mkdirSync(path.join(harness.runRoot, "src"), { recursive: true });
+    fs.writeFileSync(path.join(harness.mainRoot, filePath), "old\n", "utf8");
+    fs.writeFileSync(path.join(harness.runRoot, filePath), "new\n", "utf8");
+    const onWorkspaceChanged = vi.fn();
+    const service = new MergeService(harness.database, {
+      ...harness.baseDeps,
+      onWorkspaceChanged,
+      getFileChanges: () => [{
+        filePath,
+        changeType: "edit",
+        oldContent: "old\n",
+        newContent: "new\n",
+      }],
+    });
+
+    service.mergeRunToMain("run-1");
+
+    expect(onWorkspaceChanged).toHaveBeenCalledWith({
+      type: "workspace_changed",
+      conversationId: "conv-1",
+      workspaceId: "workspace-1",
+      reason: "merge_completed",
+    });
+  });
+
   it("auto merges files when main workspace still matches base content", () => {
     const harness = createMergeHarness();
     const filePath = "src/app.ts";

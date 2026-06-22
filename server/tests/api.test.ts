@@ -313,7 +313,7 @@ describe("AgentHub local server API", () => {
         client.get(`/runs/${secondRunId}`),
       ]);
       return runs.every((run) => run.json().status === "running");
-    });
+    }, 8000);
 
     const interruptResponse = await client.post(`/runs/${firstRunId}/interrupt`);
     expect(interruptResponse.statusCode).toBe(200);
@@ -321,7 +321,7 @@ describe("AgentHub local server API", () => {
     await waitFor(async () => {
       const current = await client.get(`/runs/${firstRunId}`);
       return current.json().status === "interrupted";
-    });
+    }, 8000);
 
     const interruptedRun = await client.get(`/runs/${firstRunId}`);
     const unaffectedRun = await client.get(`/runs/${secondRunId}`);

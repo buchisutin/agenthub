@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import type {
   ApprovalRequiredEvent,
+  ApprovalStatusChangedEvent,
   CommandOutputEvent,
   CommandStartedEvent,
   FileChangedEvent,
@@ -17,6 +18,7 @@ import type {
   ToolInputDeltaEvent,
   ToolResultEvent,
   ToolStartedEvent,
+  WorkspaceChangedEvent,
 } from '../types';
 
 const SOCKET_URL = 'http://localhost:8000';
@@ -32,6 +34,7 @@ export type SocketEventHandler = {
   onCommandOutput?: (event: CommandOutputEvent) => void;
   onFileChanged?: (event: FileChangedEvent) => void;
   onApprovalRequired?: (event: ApprovalRequiredEvent) => void;
+  onApprovalStatusChanged?: (event: ApprovalStatusChangedEvent) => void;
   onRunStatusChanged?: (event: RunStatusChangedEvent) => void;
   onRunCompleted?: (event: RunCompletedEvent) => void;
   onRunFailed?: (event: RunFailedEvent) => void;
@@ -39,6 +42,7 @@ export type SocketEventHandler = {
   onOrchestratorPlanningStarted?: (event: OrchestratorPlanningStartedEvent) => void;
   onOrchestratorTextDelta?: (event: OrchestratorTextDeltaEvent) => void;
   onOrchestratorPlanningDone?: (event: OrchestratorPlanningDoneEvent) => void;
+  onWorkspaceChanged?: (event: WorkspaceChangedEvent) => void;
   onConnectionChange?: (connected: boolean) => void;
 };
 
@@ -115,6 +119,9 @@ export class SocketService {
     this.socket.on('approval_required', (event: ApprovalRequiredEvent) => {
       this.dispatchEvent(event, this.handlers.onApprovalRequired);
     });
+    this.socket.on('approval_status_changed', (event: ApprovalStatusChangedEvent) => {
+      this.dispatchEvent(event, this.handlers.onApprovalStatusChanged);
+    });
     this.socket.on('run_status_changed', (event: RunStatusChangedEvent) => {
       this.dispatchEvent(event, this.handlers.onRunStatusChanged);
     });
@@ -135,6 +142,9 @@ export class SocketService {
     });
     this.socket.on('orchestrator_planning_done', (event: OrchestratorPlanningDoneEvent) => {
       this.dispatchEvent(event, this.handlers.onOrchestratorPlanningDone);
+    });
+    this.socket.on('workspace_changed', (event: WorkspaceChangedEvent) => {
+      this.dispatchEvent(event, this.handlers.onWorkspaceChanged);
     });
   }
 

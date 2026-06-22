@@ -53,6 +53,11 @@ describe("runtime visibility", () => {
           available: true,
           capabilities: ["planning"],
         }),
+        codex_cli: makeRuntime({
+          displayName: "Codex CLI",
+          available: true,
+          capabilities: ["planning"],
+        }),
         fake_adapter: makeRuntime({
           displayName: "Fake Adapter",
           available: false,
@@ -69,6 +74,11 @@ describe("runtime visibility", () => {
       expect.objectContaining({
         adapterType: "claude_cli",
         displayName: "Claude Code",
+        registered: true,
+      }),
+      expect.objectContaining({
+        adapterType: "codex_cli",
+        displayName: "Codex CLI",
         registered: true,
       }),
       expect.objectContaining({
@@ -110,6 +120,10 @@ describe("runtime visibility", () => {
           displayName: "Claude Code",
           available: true,
         }),
+        codex_cli: makeRuntime({
+          displayName: "Codex CLI",
+          available: true,
+        }),
         fake_adapter: makeRuntime({
           displayName: "Fake Adapter",
           available: false,
@@ -145,6 +159,10 @@ describe("runtime visibility", () => {
         runtimeRegistry: new RuntimeRegistry({
           claude_cli: makeRuntime({
             displayName: "Claude Code",
+            available: true,
+          }),
+          codex_cli: makeRuntime({
+            displayName: "Codex CLI",
             available: true,
           }),
           fake_adapter: makeRuntime({

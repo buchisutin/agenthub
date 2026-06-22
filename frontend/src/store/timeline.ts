@@ -312,7 +312,10 @@ export function applySocketEventToTimelineItem(
             kind: 'approval_request',
             id: `${event.runId}-approval-${item.blocks.length}`,
             reason: event.reason,
-            status: 'pending',
+            approvalId: event.approvalId ?? '',
+            toolName: typeof event.rawEvent?.tool_name === 'string' ? event.rawEvent.tool_name : undefined,
+            toolInput: event.rawEvent?.tool_input as Record<string, unknown> | undefined,
+            status: 'pending' as const,
           },
         ],
       };

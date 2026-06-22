@@ -9,6 +9,11 @@ export interface EnvConfig {
   claudeDisallowedTools: string[];
   codexCommand: string;
   codexBaseArgs: string[];
+  apiBaseUrl: string;
+  hitlEnabled: boolean;
+  plannerApiUrl: string | undefined;
+  plannerApiKey: string | undefined;
+  plannerModel: string | undefined;
 }
 
 function parseCsv(value: string | undefined): string[] {
@@ -66,6 +71,13 @@ export function getEnvConfig(overrides: Partial<EnvConfig> = {}): EnvConfig {
     codexBaseArgs: parseCsv(process.env.CODEX_BASE_ARGS).length
       ? parseCsv(process.env.CODEX_BASE_ARGS)
       : ["-s", "workspace-write", "-a", "never"],
+    apiBaseUrl:
+      process.env.AGENTHUB_API_URL ??
+      `http://localhost:${Number(process.env.PORT ?? 8000)}`,
+    hitlEnabled: process.env.HITL_ENABLED === "true",
+    plannerApiUrl: process.env.PLANNER_API_URL,
+    plannerApiKey: process.env.PLANNER_API_KEY,
+    plannerModel: process.env.PLANNER_MODEL,
     ...overrides,
   };
 }

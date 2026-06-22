@@ -9,6 +9,7 @@ import { RunsService } from "../runs/runs.service.js";
 import { ApprovalService } from "../approvals/approvals.service.js";
 import { ConversationSummary } from "../../shared/types.js";
 import { DatabaseClient } from "../../db/client.js";
+import { RunManager } from "../../runtime/manager/run-manager.js";
 
 export interface ConversationsRouterDeps {
   conversationsService: ConversationsService;
@@ -20,10 +21,11 @@ export interface ConversationsRouterDeps {
   runsService?: RunsService;
   approvalService?: ApprovalService;
   database?: DatabaseClient;
+  runManager?: RunManager;
 }
 
 export function createConversationsRouter(deps: ConversationsRouterDeps): Router {
-  const { conversationsService, workspacesService, workspaceIsolationService, previewService, tasksService, assignmentsService, runsService, approvalService, database } = deps;
+  const { conversationsService, workspacesService, workspaceIsolationService, previewService, tasksService, assignmentsService, runsService, approvalService, database, runManager } = deps;
   const router = Router();
 
   router.get("/", (_req, res) => {
@@ -277,6 +279,10 @@ export function createConversationsRouter(deps: ConversationsRouterDeps): Router
 
     const cleanupRunWorkspaces = req.body?.cleanupRunWorkspaces === true;
     let workspaceCleanup: { cleaned: unknown[]; skipped: Array<{ runId: string; reason: string }> } | undefined;
+
+    if (runManager) {
+      await runManager.stopConversationRuns(req.params.conversationId);
+    }
 
     if (cleanupRunWorkspaces && workspaceIsolationService && runsService) {
       try {

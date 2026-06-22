@@ -33,4 +33,6 @@ files.zip
 skills-lock.json
 docs/superpowers/
 docs/
+!docs/
+!docs/screenshots/
 AgentHub_PRD.md

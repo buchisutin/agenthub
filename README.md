@@ -6,6 +6,14 @@
 
 ---
 
+## 界面预览
+
+![IM 聊天页面与任务协作看板](docs/screenshots/chat-and-collaboration.png)
+
+![Agent 配置与会话创建](docs/screenshots/agent-setup.png)
+
+---
+
 ## 为什么做这个
 
 Claude Code 和 Codex 能力互补但各自孤立——切换工具意味着丢失上下文、重复工作、手动合并冲突。AgentHub 把它们连接起来：一个对话，多个 Agent，共享同一个工作区。

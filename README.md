@@ -138,3 +138,22 @@ server/
 - LLM 在合并流水线中的真正价值是 **CI 失败后的自修复**，而非解决 diff 冲突
 
 `use_llm` 合并策略作为预留接口保留，计划在确定性方案无法解决时配合 token 预算上限激活。
+
+---
+
+## TODO
+
+**合并层**
+- [ ] 接入 [Weave](https://github.com/Ataraxy-Labs/weave) 替换行级对比，用 Tree-sitter 实体级合并消除假冲突
+- [ ] `use_llm` 合并策略：传 diff 而非全文以降低 token 消耗，配合预算上限激活
+
+**CI 门控**
+- [ ] Run 完成后在 worktree 内执行 `npm test`，测试不通过阻断合并
+- [ ] CI 失败时将错误日志注入 Agent 上下文，在同一 worktree 内自动重试（上限 3 轮）
+
+**前端**
+- [ ] ToolApprovalCard 接通后端审批 API，完成 PreToolUse Hook → Web UI 的最后一公里
+- [ ] DAG 依赖关系可视化（节点 + 有向边）
+
+**工程**
+- [ ] 接入 Weave 的 `weave-crdt` 包，支持实体级意图声明，将冲突预测粒度从文件级降到函数级

@@ -142,11 +142,20 @@ server/
 
 ## 调研背景
 
-在确定合并方案前，调研了约 20 个开源多 Agent 项目（git-lanes、Weave、Wit、STORM、Maestro-AI、Taskplane 等）及 3 篇学术论文，主要结论：
+为了验证核心设计决策，调研了 20+ 个开源项目、多篇学术论文（STORM、CodeCRDT 等）以及主流框架（LangGraph、CrewAI、AutoGen、MetaGPT 等）。
 
-- git worktree 隔离 + 三路合并是行业主流基线
-- LLM 合并不是主流——Weave 的 Tree-sitter 实体级合并可消除 95% 假冲突，零 token 成本
-- Token 消耗的大头在编码阶段和上下文重传，不在合并环节
-- LLM 在合并流水线中的真正价值是 **CI 失败后的自修复**，而非解决 diff 冲突
+**协作模式选择**
 
-`use_llm` 合并策略作为预留接口保留，计划在确定性方案无法解决时配合 token 预算上限激活。
+多 Agent 协作存在 6 种主流模式（Supervisor-Worker、Handoff Chain、Group Chat、Assembly Line 等）。Orchestrator-Worker 是约 80% 生产级系统的选择，核心优势是把 N 个 Agent 间的 O(n²) 消息复杂度降为 O(n)，Orchestrator 统一承担规划、调度、上下文传递与错误处理。AgentHub 采用此模式，并加入 LLM 驱动的 DAG 规划层。
+
+**HITL 审批架构**
+
+CLI 与 Web UI 的桥接有三种模式：Hook + 本地 HTTP Server（claude-hitl-approval）、MCP Proxy 协议层拦截（Preloop）、WebSocket/SSE 进程内事件流（Hermes、AG-UI）。AgentHub 采用 Hook + HTTP 轮询方式，通过 PreToolUse Hook 脚本阻塞工具调用直到用户决策，同时用 Socket.IO 推送实时事件；MCP Proxy 模式可覆盖更多 Agent 类型，预留为后续扩展方向。
+
+**并发控制分层**
+
+并发控制分为四层：L0 物理隔离（git worktree）、L1 声明式锁定（写前声明文件范围）、L2 写时乐观并发（STORM，版本号检测，性能优于 worktree 隔离）、L3 主动感知（实时监控重叠预警）。AgentHub 实现 L0 + 规划阶段的文件级冲突预测（L1 的粗粒度版本），L2/L3 作为后续演进方向。
+
+**合并机制**
+
+git worktree 隔离 + 三路合并是行业主流基线。LLM 合并不是主流——Weave 的 Tree-sitter 实体级合并可消除 95% 假冲突，零 token 成本。LLM 在合并流水线中的真正价值是 CI 失败后的自修复，而非解决 diff 冲突。`use_llm` 策略作为预留接口保留，计划在确定性方案无法解决时配合 token 预算上限激活。
